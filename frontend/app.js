@@ -1940,6 +1940,7 @@ function drawStrip() {
 /* --------- tape ticker --------- */
 let tapeTs = 0;
 function renderTape(force) {
+  if ($("tape")?.hidden) return;
   const now = Date.now();
   if (!force && now - tapeTs < 5000) return;
   tapeTs = now;

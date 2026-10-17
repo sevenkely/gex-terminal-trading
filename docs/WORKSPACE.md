@@ -263,3 +263,29 @@ Module de présentation : `frontend/chart-layout.js`. La recette
 intervalle et persistance après rechargement, cadrage, Zen, dialogue, absence de
 débordement et tailles 1440×1000, 1366×768, 1024×900 et 390×844.
 Ces contrôles ne constituent pas une validation du flux marché réel.
+
+## Habillage Studio — animations et identités visuelles
+
+`design.css` et `design.js` ajoutent une couche de présentation indépendante des
+calculs et abonnements. Le bandeau défilant et son contrôle sont retirés de
+l’interface, y compris après restauration d’une ancienne vue. Les nœuds masqués
+restent pour la compatibilité ; leur rendu ticker est court-circuité.
+
+- Navigation avec logos locaux d’actifs ou d’émetteurs/places, mini-courbes,
+  sélection lumineuse et transitions. L’identité exacte de chaque logo figure
+  dans son infobulle et `frontend/assets/instruments/README.md`.
+- Relief des cartes, hiérarchie des chiffres, retour du mini-graphe du prix,
+  animations d’entrée, clic, changement de présentation et valeurs GEX modifiées.
+  Les animations décoratives ne représentent jamais des trades ni la fraîcheur.
+- **Animations → Immersives / Discrètes / Désactivées** ; préférence `gex.motion`.
+  Le réglage système `prefers-reduced-motion` impose la désactivation. Les boucles
+  CSS sont suspendues lorsque l’onglet est masqué. Aucun moteur d’animation tiers,
+  abonnement réseau ni boucle JavaScript d’animation permanente ajouté.
+- La recette `tests/design_browser.cjs` vérifie huit identités locales, leur
+  alignement, la suppression du bandeau, la préférence après rechargement,
+  reduced-motion et le responsive. Le jeu de huit cotations est synthétique,
+  injecté uniquement par le test navigateur, jamais par l’application.
+
+Les marques tierces ne signifient pas une affiliation. Le pack de logos
+comporte une licence **CC BY-NC-SA 4.0**, conservée avec les assets ; vérifier une
+licence adaptée avant une redistribution commerciale.

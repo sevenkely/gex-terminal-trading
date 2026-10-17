@@ -27,7 +27,7 @@
     if(['3','5','10','15'].includes(v.depth))el('workspace-depth').value=v.depth;
     if(['gamma','vanna'].includes(v.metric))el('exposure-metric').value=v.metric;
     if(['.03','.05','.10'].includes(v.band))el('exposure-band').value=v.band;
-    el('workspace-tape').checked=v.tape!==false;
+    el('workspace-tape').checked=false; // Retired ticker; ignore legacy saved layouts.
     const width=Number(v.width);if(Number.isFinite(width)&&width>=320&&width<=720)el('exposure-dock').style.width=width+'px';
     document.body.classList.toggle('workspace-no-tape',!el('workspace-tape').checked);
     preset();

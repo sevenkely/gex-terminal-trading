@@ -114,3 +114,15 @@ Limite externe inchangée : la connexion Deribit de cet environnement est refus�
 bougies et une séance continue ne sont donc pas certifiées ici. La persistance
 conserve les observations reçues, mais ne reconstitue ni des prints jamais reçus,
 ni un historique tick exhaustif. Aucun compte de trading ni abonnement ajouté.
+
+### Passe frontend Studio
+
+Habillage anthracite/cyan, mini-courbes rétablies, logos locaux et cartes
+hiérarchisées. Bandeau défilant retiré. Animations riches par défaut, intensité
+réglable et réduction des mouvements respectée. Aucun changement de calcul,
+de source ou de moteur de graphique.
+
+Vérifications : quatre recettes navigateur réussies (cockpit, flux/dessins,
+présentation essentielle, design/animations), 66 tests Python et syntaxe des
+scripts. Les huit onglets et quatre dimensions d’écran sont testés ; la recette
+visuelle reste synthétique et ne certifie pas la couverture du marché réel.
