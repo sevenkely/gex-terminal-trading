@@ -8,13 +8,42 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import resource
+try:
+    import resource          # Unix : getrusage
+except ImportError:           # Windows : pas de module resource
+    resource = None
 import shutil
 import sqlite3
 import tempfile
 import threading
 import time
 from storage import write_json
+
+
+def _max_rss_kib():
+    """Pic de mémoire RSS du processus (KiB) : getrusage sur Unix,
+    K32GetProcessMemoryInfo (psapi) sur Windows, None si indisponible."""
+    if resource is not None:
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    try:
+        import ctypes
+        class PMC(ctypes.Structure):
+            _fields_ = [("cb", ctypes.c_uint32), ("PageFaultCount", ctypes.c_uint32)] + [
+                (n, ctypes.c_size_t) for n in
+                ("PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
+                 "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage",
+                 "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")]
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel32.K32GetProcessMemoryInfo.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32]
+        kernel32.K32GetProcessMemoryInfo.restype = ctypes.c_int
+        counters = PMC()
+        counters.cb = ctypes.sizeof(PMC)
+        if kernel32.K32GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+            return counters.PeakWorkingSetSize // 1024
+    except Exception:  # noqa: BLE001 — repli gracieux, le reste du snapshot reste valide
+        pass
+    return None
 
 
 class Metrics:
@@ -37,7 +66,7 @@ class Metrics:
                         server_errors=self.errors,rejected=self.rejected,
                         latency_p95_ms=latency[int((len(latency)-1)*.95)] if latency else None,
                         loop_lag_seconds=self.loop_lag,last_heartbeat=self.last_heartbeat,
-                        max_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+                        max_rss_kib=_max_rss_kib(),
                         disk_free_bytes=shutil.disk_usage(disk_path).free)
 
 
