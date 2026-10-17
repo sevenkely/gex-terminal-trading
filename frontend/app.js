@@ -2,6 +2,21 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+function storedJSON(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
+}
+function regimeLabel(regime) {
+  return ({long_gamma: "LONG GAMMA ESTIMÉ", short_gamma: "SHORT GAMMA ESTIMÉ", neutral: "GAMMA NEUTRE", unavailable: "GEX INDISPONIBLE"})[regime] || "GEX INDISPONIBLE";
+}
+let adminToken = "";
+async function adminFetch(url, options = {}) {
+  const r = await fetch(url, {...options, headers: {...options.headers, Authorization: `Bearer ${adminToken}`}});
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error(j.detail || `Erreur administration ${r.status}`);
+  }
+  return r;
+}
 const FUTURES = new Set(["ES", "NQ", "GC"]);
 const CRYPTO = new Set(["BTC"]);   // tape Deribit : perp (notionnel) ou options (prime)
 const PERIOD = { "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "1d": 86400 };
@@ -14,9 +29,9 @@ const state = {
   ladderOn: localStorage.getItem("gex.ladder") !== "0",
   sound: localStorage.getItem("gex.sound") === "1",
   histArr: [], pulses: [], crossCounts: {},
-  ltgl: Object.assign({ cw: true, pw: true, flip: true, pain: false, hist: true, band: true,
-    vwap: true, prof: true, heat: true },
-    JSON.parse(localStorage.getItem("gex.ltgl") || "{}")),
+  ltgl: Object.assign({ cw: true, pw: true, flip: true, pain: false, hist: false, band: false,
+    vwap: true, prof: false, heat: false },
+    storedJSON("gex.ltgl", {})),
   ws: null,
   wsTimer: null,
   reconnects: 0,
@@ -218,7 +233,7 @@ function drawLevels(L, profile) {
   $("lv-callwall-gex").textContent = w0c ? `${fmtUSD(w0c.gex)} · ${fmtOI(w0c.oi)} OI` : "";
   $("lv-putwall-gex").textContent = w0p ? `${fmtUSD(w0p.gex)} · ${fmtOI(w0p.oi)} OI` : "";
   $("lv-zerogex").textContent = fmtPrice(flip);
-  $("lv-netgex").textContent = fmtUSD(L.net_gex_total);
+  $("lv-netgex").textContent = L.available === false || L.regime === "unavailable" ? "—" : fmtUSD(L.net_gex_total);
   const tg = $("tile-netgex");
   tg.classList.toggle("long", L.regime === "long_gamma");
   tg.classList.toggle("short", L.regime === "short_gamma");
@@ -248,8 +263,9 @@ function drawLevels(L, profile) {
 
   // régime
   const rb = $("regime-badge");
-  if (L.regime === "long_gamma") { rb.textContent = "LONG GAMMA"; rb.className = "badge long"; }
-  else if (L.regime === "short_gamma") { rb.textContent = "SHORT GAMMA"; rb.className = "badge short"; }
+  if (L.regime === "long_gamma") { rb.textContent = "LONG GAMMA ESTIMÉ"; rb.className = "badge long"; }
+  else if (L.regime === "short_gamma") { rb.textContent = "SHORT GAMMA ESTIMÉ"; rb.className = "badge short"; }
+  else { rb.textContent = regimeLabel(L.regime); rb.className = "badge"; }
 
   // pin score : proximité spot/flip relativement à σ daily
   const flip0 = L.gamma_flip ?? L.zero_gex;
@@ -261,7 +277,7 @@ function drawLevels(L, profile) {
   $("lv-pin").textContent = pin ? pin + " / 100" : "—";
   $("pin-gauge").style.setProperty("--sc", String(pin));
   $("lv-pin-note").textContent = flip0 != null && L.spot
-    ? `${Math.round(Math.abs(L.spot - flip0))} pts du flip` : "";
+    ? `${Math.round(Math.abs(L.spot - flip0))} pts · indice heuristique, pas une probabilité` : "";
 
   renderZoneMap(L);
   renderRail();
@@ -272,8 +288,8 @@ function drawLevels(L, profile) {
   const hr = $("hero-regime");
   if (L.regime) {
     hr.hidden = false;
-    hr.textContent = L.regime === "long_gamma" ? "LONG GAMMA" : "SHORT GAMMA";
-    hr.className = "mono " + (L.regime === "long_gamma" ? "long" : "short");
+    hr.textContent = regimeLabel(L.regime);
+    hr.className = "mono " + (L.regime === "long_gamma" ? "long" : L.regime === "short_gamma" ? "short" : "");
     hr.id = "hero-regime";
   }
 }
@@ -458,11 +474,15 @@ $("fit-toggle").addEventListener("click", () => {
   queueGamma();
 });
 
+let gexSeq = 0;
 async function loadGex() {
-  const r = await fetch(`/api/gex/${state.symbol}?filter=${state.filter}&win=${state.win}`);
+  const seq = ++gexSeq, sym = state.symbol, filter = state.filter;
+  const r = await fetch(`/api/gex/${sym}?filter=${filter}&win=${state.win}`);
   const j = await r.json();
+  if (seq !== gexSeq || sym !== state.symbol || filter !== state.filter) return;
   if (j.error) throw new Error(j.error);
   state.meta = j.meta;
+  renderDataStatus(j.meta);
   fetchHeat();
   drawLevels(j, j);
   renderProfile(j);
@@ -502,7 +522,7 @@ function renderChainAge() {
   try {
     // CBOE envoie un horodatage nu, Deribit un ISO déjà suffixé du fuseau
     const iso = /([+-]\d\d:\d\d|Z)$/.test(chainTsCache) ? chainTsCache : chainTsCache + "-04:00";
-    const t = new Date(iso);
+    const t = state.meta?.chain_ts_epoch ? new Date(state.meta.chain_ts_epoch * 1000) : new Date(iso);
     const age = Date.now() - t.getTime();
     const mins = Math.max(0, Math.round(age / 60000));
     const h = Math.floor(mins / 60), m = mins % 60;
@@ -518,7 +538,26 @@ function renderChainAge() {
 }
 setInterval(renderChainAge, 1000);
 
+function renderDataStatus(meta) {
+  state.dataStatus = meta;
+  const empty = meta.available === false;
+  $("expiry-empty").hidden = !empty;
+  $("expiry-empty-title").textContent = state.filter === "0dte" ? "Aucune option 0DTE exploitable aujourd'hui" : "Aucune option exploitable pour ce filtre";
+  const next = meta.next_expiry ? new Date(meta.next_expiry * 1000).toLocaleString("fr-FR", {timeZone: meta.timezone, dateStyle: "short", timeStyle: "short"}) : "non disponible";
+  $("expiry-empty-detail").textContent = `${meta.valuation_date || ""} · ${meta.timezone || ""}. Les échéances expirées et l'OI nul sont exclus. Après expiration, le week-end ou sans OI publié, le 0DTE peut être vide. Prochaine échéance avec OI : ${next}. Aucun remplacement automatique par une autre échéance.`;
+  $("filter-summary").textContent = `${state.filter.toUpperCase()} · ${meta.filtered_contracts || 0} séries · ${fmtOI(meta.filtered_oi || 0)} OI`;
+  const age = Math.max(0, Math.floor((Date.now() / 1000 - (meta.chain_ts_epoch || Date.now() / 1000)) / 60));
+  $("data-quality").title = meta.model_inputs ? JSON.stringify(meta.model_inputs,null,2) : "";
+  $("data-quality").textContent = `Options : ${CRYPTO.has(state.symbol) ? "Deribit" : "CBOE différées ~15 min"} · snapshot ${age} min · ${meta.oi_reference || "Date OI inconnue"} · GEX estimé calls + / puts −${state.meta?.gex_source ? ` · proxy ${state.meta.gex_source} → ${state.symbol}` : ""}${meta.projection && !meta.projection.fresh ? " · BASIS PÉRIMÉ — alertes suspendues" : ""}`;
+}
+$("expiry-show-all").addEventListener("click", () => document.querySelector('#filters [data-f="all"]').click());
+
 function setMode(m) {
+  state.mode = m;
+  const warning = $("feed-warning");
+  warning.hidden = m === "RITHMIC" || m === "DERIBIT";
+  warning.dataset.mode = m;
+  warning.textContent = m === "SIM" ? "DÉMONSTRATION — prix simulés, non utilisables pour une décision réelle. Alertes de trading suspendues." : m === "STALE" ? "FLUX INTERROMPU — dernier prix figé. Aucun passage automatique en simulation. Alertes suspendues." : "PRIX DIFFÉRÉ — aucun flux de prix temps réel connecté. Dernier prix connu figé ; alertes suspendues.";
   const chip = $("mode-chip");
   if (m === "RITHMIC") {
     chip.className = "chip rithmic"; $("mode-label").textContent = "RITHMIC LIVE";
@@ -527,8 +566,8 @@ function setMode(m) {
     chip.className = "chip rithmic"; $("mode-label").textContent = "DERIBIT LIVE";
     $("sb-sources").textContent = "Options Deribit 24/7 (OI · IV · échéances quotidiennes) · index BTC et tape temps réel";
   } else {
-    chip.className = "chip sim"; $("mode-label").textContent = "SIM";
-    $("sb-sources").textContent = "CBOE delayed 15-min · Yahoo Finance · ticks SIM";
+    chip.className = "chip sim"; $("mode-label").textContent = m === "SIM" ? "DÉMO / SIM" : m === "STALE" ? "FLUX PÉRIMÉ" : "DIFFÉRÉ";
+    $("sb-sources").textContent = `Prix ${m === "SIM" ? "simulés" : m === "STALE" ? "figés (flux interrompu)" : "différés"} · options ${CRYPTO.has(state.symbol) ? "Deribit" : "CBOE différées"}`;
   }
 }
 
@@ -540,6 +579,8 @@ function barKey(tsSeconds) {
 }
 
 function onTick(msg) {
+  if (msg.data_status) renderDataStatus(msg.data_status);
+  if (msg.mode) setMode(msg.mode);
   const p = msg.price;
   const el = $("live-price"), ch = $("live-change");
   tweenNum(el, p, fmtPrice);
@@ -564,7 +605,7 @@ function onTick(msg) {
   renderTape();
 
   // bougie live
-  if (state.lastBar && msg.ts) {
+  if (state.lastBar && msg.ts && ["RITHMIC", "DERIBIT", "SIM"].includes(msg.mode)) {
     const key = barKey(msg.ts);
     const lastKey = state.lastBar.time;
     if ((typeof key === "number" && key > lastKey) || (typeof key === "string" && key > String(lastKey))) {
@@ -591,7 +632,8 @@ function onTick(msg) {
     }
   }
 
-  checkRules(p);
+  if (["RITHMIC", "DERIBIT"].includes(state.mode) && (!state.dataStatus?.projection || state.dataStatus.projection.fresh)) checkRules(p);
+  else rules.state.clear();
   queueHeroSpark();
   state.tickCount++;
   const src = msg.mode === "RITHMIC" ? "Rithmic" : msg.mode === "DERIBIT" ? "Deribit" : "SIM";
@@ -611,16 +653,20 @@ function connectWS() {
     // symbole courant (sinon la barre active prend le prix de l'autre
     // instrument et l'échelle de prix couvre les deux).
     if (ws._sym !== state.symbol || ws !== state.ws) return;
-    const msg = JSON.parse(e.data);
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
     if (msg.symbol && msg.symbol !== state.symbol) return;
     if (msg.type === "init") {
+      if (msg.data_status) renderDataStatus(msg.data_status);
       setMode(msg.mode);
       if (msg.price) { $("live-price").textContent = fmtPrice(msg.price); state.prevPrice = msg.price; }
       if (msg.levels) drawLevels(msg.levels, state.profile);
     } else if (msg.type === "tick") onTick(msg);
   };
-  ws.onclose = () => {
+  ws.onclose = (event) => {
     if (state.ws !== ws) return;
+    if(event.code===4401) window.gexRequireAccess?.();
+    setMode("STALE");
     const delay = Math.min(15000, 1000 * 2 ** state.reconnects++);
     state.wsTimer = setTimeout(connectWS, delay);
   };
@@ -763,6 +809,7 @@ const shortInst = (n) => {
 };
 
 function renderFlow(j) {
+  $("fl-abs-label").textContent = j?.kind === "options" || j?.src === "options" ? "ACTIVITÉ OPTIONS / INDEX STABLE" : "ABSORPTION ESTIMÉE";
   const badge = $("flow-state"), contract = $("flow-contract"), note = $("fl-note");
   if (!badge) return;
   const crypto = CRYPTO.has(state.symbol);
@@ -789,7 +836,7 @@ function renderFlow(j) {
     note.textContent = (j && j.reason) || "";
     return;
   }
-  note.textContent = j.live ? "" : (crypto
+  note.textContent = j.live ? (opts ? "Primes agrégées sur plusieurs contrats et index stable : ne prouve pas une absorption de carnet." : "") : (crypto
     ? "Flux Deribit interrompu — dernière image reçue."
     : "Connexion Rithmic interrompue — dernières données reçues.");
   badge.textContent = j.live ? "LIVE" : "FIGÉ";
@@ -820,7 +867,7 @@ function renderFlow(j) {
   $("fl-abs-n").textContent = abs.length ? String(abs.length) : "";
   $("fl-absorb").innerHTML = abs.length ? abs.map((a) => {
     const t = new Date(a.ts * 1000).toLocaleTimeString("fr-FR", { hour12: false });
-    const lab = a.side === "buy" ? "ACHATS ABSORBÉS" : "VENTES ABSORBÉES";
+    const lab = opts ? (a.side === "buy" ? "PRIMES ACHAT / INDEX STABLE" : "PRIMES VENTE / INDEX STABLE") : a.side === "buy" ? "ACHATS ABSORBÉS (EST.)" : "VENTES ABSORBÉES (EST.)";
     const inst = a.instrument ? shortInst(a.instrument) : "";
     return `<div class="fl-row ${a.side}${inst ? " opts" : ""}" title="${fmtFlowPx(a.price)}">` +
       `<span class="t">${t}</span><span class="p">${inst || fmtFlowPx(a.price)}</span>` +
@@ -842,7 +889,7 @@ function renderFlow(j) {
   const maxSeq = abs.length ? Math.max(...abs.map((a) => a.seq)) : 0;
   if (flowAbsSeq && maxSeq > flowAbsSeq) {
     for (const a of abs.filter((x) => x.seq > flowAbsSeq).sort((x, y) => x.seq - y.seq)) {
-      toast(`Absorption ${a.side === "buy" ? "des achats" : "des ventes"}${a.instrument ? " " + shortInst(a.instrument) : ""} @ ${fmtFlowPx(a.price)} — ${fmt(a.volume)}${usd ? "" : " contrats"} (${a.window_s}s)`, a.side === "buy" ? "var(--red)" : "var(--green)", 8000);
+      toast(`${opts ? "Activité options / index stable" : "Absorption estimée"} ${a.side === "buy" ? "des achats" : "des ventes"}${a.instrument ? " " + shortInst(a.instrument) : ""} @ ${fmtFlowPx(a.price)} — ${fmt(a.volume)}${usd ? "" : " contrats"} (${a.window_s}s)`, a.side === "buy" ? "var(--red)" : "var(--green)", 8000);
     }
   }
   flowAbsSeq = Math.max(flowAbsSeq, maxSeq);
@@ -1081,7 +1128,7 @@ function flowRender() {
     const cls = [[FLOW_RADIUS[3], max], [FLOW_RADIUS[2], classes[0]], [FLOW_RADIUS[1], classes[1]]];
     lg.innerHTML = cls.map(([r, v]) =>
       `<span><i style="width:${r}px;height:${r}px"></i>≥&nbsp;${usd ? fmtUsd(v) : fmtQty(v)}</span>`).join("") +
-      `<span><i class="abs"></i>absorption</span><span class="xl">×N&nbsp;prints</span>`;
+      `<span><i class="abs"></i>${CRYPTO.has(state.symbol) && flowSrc === "options" ? "activité options / index stable" : "absorption estimée"}</span><span class="xl">×N&nbsp;prints</span>`;
   }
   // une cellule fraîche doit continuer à pulser : on se réarme brièvement
   if (recent) setTimeout(queueFlow, 260);
@@ -1368,8 +1415,8 @@ $("ladder-toggle").addEventListener("click", () => {
 const deriv = { data: null, at: 0 };
 async function loadDerivs() {
   const tab = $("tab-deriv");
-  if (tab) tab.hidden = !CRYPTO.has(state.symbol);
-  if (!CRYPTO.has(state.symbol)) { renderDerivs(null); return; }
+  if (tab) tab.hidden = false;
+  // Derivative term/skew data is available for both CBOE and Deribit.
   const sym = state.symbol;
   try {
     const r = await fetch(`/api/derivs/${sym}`);
@@ -1476,8 +1523,8 @@ function drawTerm(rows) {
 const RULE_KINDS = { cross: "Franchit", near: "Approche ≤", regime: "Régime γ" };
 const RULE_LEVELS = { cw1: "CW1", pw1: "PW1", flip: "FLIP", pain: "MAX PAIN", vwap: "VWAP", price: "Prix fixe" };
 const rules = {
-  list: JSON.parse(localStorage.getItem("gex.rules") || "[]"),
-  log: JSON.parse(localStorage.getItem("gex.rlog") || "[]"),
+  list: storedJSON("gex.rules", []),
+  log: storedJSON("gex.rlog", []),
   state: new Map(),        // id -> { last, armed, regime }
 };
 function saveRules() {
@@ -1539,6 +1586,7 @@ $("rule-add").addEventListener("click", () => {
     if (!(px > 0)) { err("Prix fixe invalide."); return; }
     r.px = px;
   }
+  r.symbol = state.symbol;
   rules.list.push(r);
   rules.state.set(r.id, {});
   $("rule-x").value = "";
@@ -1567,6 +1615,7 @@ function fireRule(r, text, px) {
 function checkRules(px) {
   if (!rules.list.length || !(px > 0)) return;
   for (const r of rules.list) {
+    if (!r.symbol || r.symbol !== state.symbol) continue;
     const st = rules.state.get(r.id) || {};
     rules.state.set(r.id, st);
     if (r.kind === "regime") {
@@ -1579,9 +1628,9 @@ function checkRules(px) {
     const lv = r.level === "price" ? r.px : levelPrice(r.level);
     if (!(lv > 0)) { st.last = px; continue; }
     if (r.kind === "cross") {
-      if (st.last != null && Math.sign(px - lv) !== Math.sign(st.last - lv))
+      if (st.last != null && st.level === lv && Math.sign(px - lv) !== Math.sign(st.last - lv))
         fireRule(r, `${r.level === "price" ? "Prix" : RULE_LEVELS[r.level]} franchi ${px > lv ? "à la hausse" : "à la baisse"} · ${fmtPrice(lv)}`, lv);
-      st.last = px;
+      st.last = px; st.level = lv;
     } else if (r.kind === "near") {
       const bps = Math.abs(px / lv - 1) * 1e4;
       if (bps <= r.bps) {
@@ -1627,7 +1676,7 @@ function renderReaction() {
     rows.push({ ...l, touches, held, mv: touches ? move / touches : 0 });
   }
   const maxMv = Math.max(1, ...rows.map((r) => r.mv));
-  $("react-note").textContent = `${state.interval.toUpperCase()} · ${bars.length} bougies`;
+  $("react-note").textContent = `RÉTROSPECTIF · ${bars.length} bougies`;
   tab.innerHTML = '<div class="rb-head"><span>NIVEAU</span><span>STATS</span><span>%</span><span>MV</span></div>' +
     rows.map((r) => {
       const pct = r.touches ? Math.round((r.held / r.touches) * 100) : 0;
@@ -1739,14 +1788,27 @@ document.querySelectorAll("#preset-seg button").forEach((b) =>
 }
 
 /* --------- session VWAP + volume profile (calcul client) --------- */
+function sessionBars(bars, symbol, selection = "auto") {
+  const mode = selection === "auto" ? (CRYPTO.has(symbol) ? "utc" : FUTURES.has(symbol) ? "eth" : "rth") : selection;
+  const rows = [];
+  for (const b of bars || []) {
+    if (typeof b.time !== "number" || !(b.volume > 0)) continue;
+    const d = new Date(b.time * 1000);
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {timeZone: mode === "utc" ? "UTC" : "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23"}).formatToParts(d).map(p => [p.type, p.value]));
+    const minute = Number(parts.hour) * 60 + Number(parts.minute);
+    if (mode === "rth" && (minute < 570 || minute >= 960)) continue;
+    if (mode === "eth" && minute >= 1020 && minute < 1080) continue;
+    const key = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + (mode === "eth" && minute >= 1080 ? 1 : 0))).toISOString().slice(0, 10);
+    rows.push({...b, sessionKey: key});
+  }
+  if (!rows.length) return [];
+  const last = rows[rows.length - 1].sessionKey;
+  return rows.filter(b => b.sessionKey === last);
+}
+$("session-select").addEventListener("change", () => { computeSession(state.histArr); queueGamma(); });
+
 function computeSession(bars) {
-  const day = (t) => typeof t === "string" ? t.slice(0, 10) : new Date(t * 1000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-  if (!bars || !bars.length) { state.sess = null; return; }
-  const days = [...new Set(bars.map((b) => day(b.time)))];
-  const last = days[days.length - 1];
-  const nLast = bars.filter((b) => day(b.time) === last).length;
-  const keep = new Set(nLast >= 12 ? [last] : days.slice(-2));
-  const sb = bars.filter((b) => keep.has(day(b.time)));
+  const sb = sessionBars(bars, state.symbol, $("session-select").value);
   if (sb.length < 4) { state.sess = null; return; }
   let cv = 0, cs = 0, cs2 = 0;
   const vwap = [], up1 = [], dn1 = [], up2 = [], dn2 = [];
@@ -1754,6 +1816,7 @@ function computeSession(bars) {
     const tp = (b.high + b.low + b.close) / 3;
     const v = b.volume || 0;
     cv += v; cs += tp * v; cs2 += tp * tp * v;
+    if (!(cv > 0)) continue;
     const w = cs / cv;
     const sd = Math.sqrt(Math.max(cs2 / cv - w * w, 0));
     vwap.push(w); up1.push(w + sd); dn1.push(w - sd); up2.push(w + 2 * sd); dn2.push(w - 2 * sd);
@@ -2218,7 +2281,7 @@ function drawGamma() {
 }
 
 /* ---------------- simulateur de scénario ---------------- */
-const scen = { open: false, dspot: 0, div: 0, timer: null, lines: {} };
+const scen = { open: false, dspot: 0, div: 0, minutes: 0, seq: 0, timer: null, lines: {} };
 
 $("scen-toggle").addEventListener("click", () => {
   scen.open = !scen.open;
@@ -2229,12 +2292,13 @@ $("scen-toggle").addEventListener("click", () => {
 $("sc-close").addEventListener("click", () => $("scen-toggle").click());
 $("sc-reset").addEventListener("click", () => {
   $("sc-spot").value = 0; $("sc-iv").value = 0;
-  scen.dspot = 0; scen.div = 0;
+  scen.dspot = 0; scen.div = 0; scen.minutes = 0; $("sc-time").value = 0; $("sc-time-v").textContent = "+0 min";
   $("sc-spot-v").textContent = "+0.00 %"; $("sc-iv-v").textContent = "+0.0 pt";
   runScenario();
 });
 [[ "sc-spot", "dspot", (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + " %"],
- [ "sc-iv",   "div",   (v) => (v >= 0 ? "+" : "") + v.toFixed(1) + " pt"]].forEach(([id, key, fmt]) => {
+ [ "sc-iv",   "div",   (v) => (v >= 0 ? "+" : "") + v.toFixed(1) + " pt"],
+ [ "sc-time", "minutes", (v) => `+${v} min`]].forEach(([id, key, fmt]) => {
   $(id).addEventListener("input", (e) => {
     const raw = parseFloat(e.target.value);
     scen[key] = key === "dspot" ? raw / 100 : raw;   // slider en %, backend en fraction
@@ -2245,11 +2309,13 @@ $("sc-reset").addEventListener("click", () => {
 });
 
 async function runScenario() {
+  const seq = ++scen.seq, sym = state.symbol, filter = state.filter;
   if (!scen.open) return;
-  if (scen.dspot === 0 && scen.div === 0) { clearScenario(); renderScenOut(null); return; }
+  if (scen.dspot === 0 && scen.div === 0 && scen.minutes === 0) { clearScenario(); renderScenOut(null); return; }
   try {
-    const r = await fetch(`/api/scenario/${state.symbol}?dspot=${scen.dspot}&div=${scen.div}&filter=${state.filter}`);
+    const r = await fetch(`/api/scenario/${state.symbol}?dspot=${scen.dspot}&div=${scen.div}&minutes=${scen.minutes}&filter=${state.filter}`);
     const j = await r.json();
+    if (seq !== scen.seq || sym !== state.symbol || filter !== state.filter || !scen.open) return;
     if (j.error || !j.strikes) return;
     drawScenLines(j);
     renderScenOut(j);
@@ -2274,6 +2340,7 @@ function drawScenLines(j) {
 }
 
 function clearScenario() {
+  scen.seq++;
   for (const k of Object.keys(scen.lines)) {
     state.candles.removePriceLine(scen.lines[k]);
     delete state.lines[k];
@@ -2295,7 +2362,7 @@ function renderScenOut(j) {
     row("ZERO-GEX", j.zero_gex, L.zero_gex) +
     row("CALL WALL", j.call_wall, L.call_wall) +
     row("PUT WALL", j.put_wall, L.put_wall) +
-    `<span class="lab">RÉGIME</span><span class="${j.regime === "long_gamma" ? "green" : "red"}" style="grid-column:span 2">${j.regime === "long_gamma" ? "LONG GAMMA" : "SHORT GAMMA"}</span>` +
+    `<span class="lab">RÉGIME</span><span class="${j.regime === "long_gamma" ? "green" : "red"}" style="grid-column:span 2">${regimeLabel(j.regime)}</span>` +
     `<span class="lab">GEX NET 1%</span><span style="grid-column:span 2" class="${(j.net_gex_total ?? 0) >= 0 ? "green" : "red"}">${fmtUSD(j.net_gex_total)}</span>`;
 }
 
@@ -2441,7 +2508,7 @@ function renderHeatmap() {
   ctx.textAlign = "left";
 
   $("hm-foot").innerHTML =
-    `<span>${nT} pas × ${nS} strikes · ${hm.mode === "session" ? "session reconstruite (OI du jour re-pricé BS aux spots historiques)" : "snapshots 15 min accumulés"}</span>` +
+    `<span>${nT} pas × ${nS} strikes · ${hm.mode === "session" ? "RECONSTRUCTION : OI, IV et temps du snapshot constants — pas un historique observé" : "snapshots 15 min accumulés"}</span>` +
     `<span>normalisé par colonne · ligne blanche = spot · pointillés = walls</span>`;
 
   // hover
@@ -2490,6 +2557,8 @@ function updateMarketStatus() {
   } else {
     open = day >= 1 && day <= 5 && min >= 9 * 60 + 30 && min < 16 * 60;
   }
+  const session = state.symbols.find(s => s.symbol === state.symbol)?.session;
+  if (session && Date.now()/1000-session.checked_at<30) open=session.open;
   chip.className = "chip " + (open ? "open" : "closed");
   label.textContent = CRYPTO.has(state.symbol) ? "24/7 · CRYPTO"
     : (open ? "MARCHÉ OUVERT" : "MARCHÉ FERMÉ");
@@ -2550,7 +2619,7 @@ async function loadSymbol() {
     initChart();
     skeletons(true);
     $("live-price").textContent = "—";
-    await loadHistory();
+    try { await loadHistory(); } catch (e) { err("Bougies indisponibles : " + e.message); }
     await loadGex();
     connectWS();
     // cartes futures : basis + carnet d'ordres
@@ -2578,7 +2647,7 @@ let rithPoll = null, lastRithState = null;
 
 async function openSettings() {
   $("modal-overlay").hidden = false;
-  await refreshSettings();
+  if (adminToken) await refreshSettings();
   rithPoll = setInterval(refreshSettings, 2500);
 }
 function closeSettings() {
@@ -2587,8 +2656,9 @@ function closeSettings() {
 }
 
 async function refreshSettings() {
+  if (!adminToken) return;
   try {
-    const r = await fetch("/api/rithmic");
+    const r = await adminFetch("/api/rithmic");
     const j = await r.json();
     const cfg = j.config, st = j.status;
 
@@ -2658,7 +2728,7 @@ async function refreshSettings() {
       else if (st.state === "error") toast("Rithmic : " + (st.message || "erreur"), "err", 8000);
     }
     lastRithState = st.state;
-  } catch { /* serveur occupé */ }
+  } catch (e) { $("rs-msg").textContent = e.message; }
 }
 
 function collectRithForm() {
@@ -2689,28 +2759,36 @@ $("rt-preset").addEventListener("change", (e) => {
   const [sys, url] = e.target.value.split("|");
   $("rt-system").value = sys; $("rt-url").value = url;
 });
+$("admin-token").addEventListener("change", (e) => { adminToken = e.target.value; refreshSettings(); });
 $("settings-btn").addEventListener("click", openSettings);
 $("modal-close").addEventListener("click", closeSettings);
 $("modal-overlay").addEventListener("click", (e) => { if (e.target === $("modal-overlay")) closeSettings(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSettings(); });
 
 $("rt-save").addEventListener("click", async () => {
-  const r = await fetch("/api/rithmic/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collectRithForm()) });
+  try {
+  const r = await adminFetch("/api/rithmic/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collectRithForm()) });
   if (r.ok) { toast("Configuration enregistrée", "ok", 2500); refreshSettings(); }
   else err("Échec de l'enregistrement");
+  } catch (e) { err(e.message); }
 });
 $("rt-connect").addEventListener("click", async () => {
+  try {
   const body = collectRithForm();
   body.enabled = true;
-  const r = await fetch("/api/rithmic/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const r = await adminFetch("/api/rithmic/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!r.ok) { err("Échec de l'enregistrement"); return; }
-  await fetch("/api/rithmic/connect", { method: "POST" });
+  await adminFetch("/api/rithmic/connect", { method: "POST" });
   toast("Connexion à Rithmic en cours…", "warn", 3000);
+  $("rt-pass").value = "";
   refreshSettings();
+  } catch (e) { err(e.message); }
 });
 $("rt-disconnect").addEventListener("click", async () => {
-  await fetch("/api/rithmic/disconnect", { method: "POST" });
+  try {
+  await adminFetch("/api/rithmic/disconnect", { method: "POST" });
   refreshSettings();
+  } catch (e) { err(e.message); }
 });
 
 /* ---------------- contrôles chart ---------------- */
@@ -2753,6 +2831,8 @@ document.querySelectorAll("#filters button").forEach((b) =>
     document.querySelectorAll("#filters button").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     state.filter = b.dataset.f;
+    closeWS();
+    clearScenario();
     try { await loadGex(); connectWS(); } catch (e) { err(e.message); }
   })
 );
@@ -2859,7 +2939,7 @@ async function discoverRithmic() {
   if (url) q.set("url", url);
   if (system) q.set("system", system);
   try {
-    const j = await (await fetch(`/api/rithmic/discover?${q}`)).json();
+    const j = await (await adminFetch(`/api/rithmic/discover?${q}`)).json();
     if (j.error) { out.textContent = `échec : ${j.error}`; return; }
     const systems = j.systems || [], gws = j.gateways || [];
     out.innerHTML =
@@ -3190,13 +3270,15 @@ function drawRender() {
 
 window.state = state;   // debug/introspection
 (async function boot() {
+  await (window.gexAccessReady || Promise.resolve());
   applyTheme(localStorage.getItem("gex.theme") || "midnight", false);
   try { const cc = JSON.parse(localStorage.getItem("gex.colors")); if (cc) { state.colors = cc; syncColorInputs(); } } catch {}
   updateMarketStatus();
   await refreshTabs();
   if (!$("tabs").children.length) {
     err("Le serveur charge les chaînes d'options… nouvelle tentative dans 5 s");
-    setTimeout(() => location.reload(), 5000);
+    setMode("DELAYED");
+    setTimeout(boot, 5000);
     return;
   }
   await loadSymbol();

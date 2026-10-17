@@ -1,0 +1,60 @@
+# Ordre d'exécution et état vérifiable — 17 octobre 2026
+
+Cette page distingue **code livré**, **test hors ligne** et **validation réelle**.
+Un test synthétique réussi ne devient jamais une validation de données live.
+
+| Ordre | Travail | Livré / vérifié ici | Validation restante |
+|---|---|---|---|
+| 1 | Recette live | CLI API + comparaison optionnelle avec URLs publiques fixes, contrôle timestamps/strikes/Greeks, rapports et soak borné | Réseau fournisseur, comparaison avec terminal de référence, droits Rithmic, coupure/reconnexion et séance entière : **non exécutés** |
+| 2 | Conventions | Calendriers XNYS/CMES/COMEX, early closes, rejet d'échéances non ouvrées, taux/rendements/courbe explicitement configurables, basis synchronisé, détection de rollover | Confirmation des spécifications officielles par produit et courbes de marché : **non attestée** |
+| 3 | Historique | Journal opt-in des évènements reçus, pagination/cursors persistants, niveaux connus, simulation next-tick avec coûts, MAE/MFE, segmentation chronologique et exclusions | Constitution d'un historique réel complet, échantillon suffisant et validation hors échantillon indépendante : **non effectuées** |
+| 4 | Option Flow actions/CME | Contrat d'ingestion normalisé, authentification séparée, déduplication, quotes synchronisées, importateur à blanc, affichage par instrument | **Fournisseur et licence non choisis/connectés**. L'adaptateur générique ne constitue pas un connecteur fournisseur live |
+| 5 | Exploitation | Lecture privée facultative HTTP/WS, sessions HttpOnly, quotas et bornes de charge, diagnostics/metrics, backups/restores vérifiés, CI | Déploiement TLS réel, supervision externe, mesure d'une journée et dimensionnement : **à exécuter sur l'environnement cible** |
+
+## Preuves disponibles dans le dépôt
+
+Dernier passage : **48 tests pytest réussis**, tests `crypto_feed` hors ligne
+réussis et contrôles de syntaxe JavaScript réussis. Un avertissement de
+dépréciation Starlette/httpx (TestClient) subsiste, sans échec.
+
+- `tests/test_calendars_acceptance.py` : jours fériés, fermeture anticipée, CME,
+  synchronisation du basis, non-fabrication de fraîcheur, taux sans look-ahead,
+  gamma comparé à une dérivée numérique d'un pricing scalaire indépendant.
+- `tests/test_evaluation_events.py` : next-tick, coûts, MAE/MFE, futurs niveaux
+  inaccessibles, gaps, changement de contrat, purge du split, queue bornée,
+  pagination, IDs non réutilisés, API d'évaluation et refus de troncature.
+- `tests/test_operations_access_ingest.py` : cookies/signatures/expiration,
+  séparation des rôles, quotas et limites de corps streamés, import normalisé,
+  sauvegarde/restauration et détection de rollover sans reconnexion silencieuse.
+- Tests précédents : GEX, 0DTE, stale, max pain, OI, scénarios et risk.
+- Tests navigateur : login de lecture, 0DTE plein/vide, retour ALL, STALE, sessions,
+  scénario temps, onglets recherche/validation, refus de simuler un indice.
+
+### Charge synthétique locale (pas une certification)
+
+100 requêtes HTTP GEX ALL/0DTE, 4 threads clients, source **synthetic_fixture** :
+100 réponses 200, aucune erreur serveur/réseau, p50 ~14 ms, p95 ~27 ms sur ce
+sandbox. Un seul petit dataset/caches chaudes, pas des flux exchange. Le résultat
+ne mesure ni les pointes d'une séance ni la capacité WebSocket multi-utilisateur.
+Les rapports détaillés sont dans `data/` ignoré par Git.
+
+La recette API de la même fixture retourne volontairement `attention_required`,
+code 2, car les prix sont SIM. Elle conserve `live_signoff=false`. Aucune
+comparaison fournisseur ni validation de droits n'a été déclarée réussie.
+
+## Ce que « terminé » doit vouloir dire avant usage réel
+
+Ne pas signer une mise en service tant que ces éléments n'ont pas de preuve :
+
+1. Prix/source/timestamps et contrats réconciliés sur chaque instrument choisi.
+2. 0DTE contrôlé avant et après expiration, y compris une fermeture anticipée.
+3. Interruption volontaire du réseau : prix figé, alertes suspendues, récupération
+   propre, changement de contrat explicite et trou de journal identifié.
+4. Séance enregistrée sans drops/erreurs ; vérifier le disque, les droits de
+   conservation et les sauvegardes. Tester une restauration dans un nouveau chemin.
+5. Recette historique sur données réelles, coûts adaptés au compte et résultats
+   réellement indépendants. Des statistiques descriptives ne prouvent pas un edge.
+6. Fournisseur options actions/CME choisi, licence vérifiée et mapping validé.
+7. TLS, hosts, tokens séparés et monitoring configurés sur la cible.
+
+Les commandes et limites sont détaillées dans [OPERATIONS.md](OPERATIONS.md).

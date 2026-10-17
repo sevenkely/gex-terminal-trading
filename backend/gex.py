@@ -17,8 +17,10 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
+from market_calendar import settlement_epoch
+from pricing import model_inputs, rates_for
 
 import numpy as np
 
@@ -41,11 +43,11 @@ def _npdf(x: np.ndarray) -> np.ndarray:
     return np.exp(-0.5 * x * x) / _SQRT_2PI
 
 
-def _expiry_epoch(yymmdd: str) -> float:
-    """Options expire at 16:00 ET on the expiry date (standard simplification)."""
-    dt = datetime(2000 + int(yymmdd[:2]), int(yymmdd[2:4]), int(yymmdd[4:6]),
-                  16, 0, tzinfo=ET)
-    return dt.timestamp()
+def _expiry_epoch(yymmdd: str, am_settled: bool = False) -> float:
+    """SPX standard root: AM settlement; SPXW/ETF: PM convention."""
+    day = datetime(2000 + int(yymmdd[:2]), int(yymmdd[2:4]), int(yymmdd[4:6])).date()
+    return settlement_epoch(day, am_settled)
+
 
 
 @dataclass
@@ -68,15 +70,26 @@ class Chain:
     exp_epoch: np.ndarray
     exp_days: np.ndarray        # calendar days to expiry at snapshot
     multiplier: float = 100.0   # taille du contrat (100 actions, 1 BTC chez Deribit)
+    rate: float = 0.04
+    dividend_yield: float = 0.0
+    rate_curve: tuple = ()
+    model_source: str = "assumed_flat_inputs"
+    model_asof: float | None = None
 
 
 def chain_from_cboe(symbol: str, raw: dict) -> Chain:
     data = raw["data"]
     ts_str = data.get("last_trade_time") or raw.get("timestamp") or ""
     try:
-        ts_epoch = datetime.fromisoformat(ts_str).replace(tzinfo=ET).timestamp()
-    except ValueError:
-        ts_epoch = datetime.now(timezone.utc).timestamp()
+        dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        ts_epoch = (dt if dt.tzinfo else dt.replace(tzinfo=ET)).timestamp()
+    except (ValueError,TypeError,AttributeError) as exc:
+        raise ValueError("CBOE source timestamp missing/invalid; refusing fabricated freshness") from exc
+    if not math.isfinite(ts_epoch) or ts_epoch > datetime.now(timezone.utc).timestamp()+5:
+        raise ValueError("CBOE timestamp is future-dated")
+    native_spot=float(data["current_price"])
+    if not math.isfinite(native_spot) or native_spot<=0:
+        raise ValueError("Invalid CBOE spot")
 
     strikes, calls, oi, iv, gam, exps = [], [], [], [], [], []
     for o in data["options"]:
@@ -85,19 +98,22 @@ def chain_from_cboe(symbol: str, raw: dict) -> Chain:
             continue
         yymmdd, cp, k = m.group(2), m.group(3), int(m.group(4)) / 1000.0
         qty = float(o.get("open_interest") or 0.0)
-        if qty <= 0:
+        if not math.isfinite(qty) or qty <= 0:
             continue
-        ee = _expiry_epoch(yymmdd)
+        try:
+            ee = _expiry_epoch(yymmdd, am_settled=m.group(1) in ("SPX", "NDX"))
+        except ValueError:
+            continue  # non-session expiry: never invent a settlement time
         if ee <= ts_epoch:      # already expired
             continue
         strikes.append(k)
         calls.append(cp == "C")
         oi.append(qty)
         iv_raw = float(o.get("iv") or 0.0)
-        # le feed CBOE renvoie l'IV en décimal (0.15 = 15 %) ; certains
-        # symboles/flux la renvoient en pourcent (15.0) -> normalisation
-        iv.append(iv_raw / 100.0 if iv_raw > 1.5 else iv_raw)
-        gam.append(float(o.get("gamma") or 0.0))
+        # CBOE IV is decimal: 1.8 means 180%, not 1.8%. Never infer units by value.
+        iv.append(iv_raw if math.isfinite(iv_raw) and iv_raw > 0 else 0.0)
+        feed_gamma=float(o.get("gamma") or 0.0)
+        gam.append(feed_gamma if math.isfinite(feed_gamma) and feed_gamma>0 else 0.0)
         exps.append(ee)
 
     strike = np.asarray(strikes, dtype=np.float64)
@@ -119,6 +135,7 @@ def chain_from_cboe(symbol: str, raw: dict) -> Chain:
         feed_gamma=np.asarray(gam, dtype=np.float64),
         exp_epoch=exp_epoch,
         exp_days=(exp_epoch - ts_epoch) / 86400.0,
+        **model_inputs(symbol, ts_epoch),
     )
 
 
@@ -130,8 +147,12 @@ def chain_from_deribit(symbol: str, raw: dict) -> Chain:
     en contrats de 1 BTC → multiplicateur 1 (au lieu de 100 actions).
     """
     ts_epoch = float(raw["ts_epoch"])
+    if not math.isfinite(ts_epoch) or ts_epoch > datetime.now(timezone.utc).timestamp()+5:
+        raise ValueError("Invalid Deribit timestamp")
     perp = raw.get("perp") or {}
     spot = float(raw.get("index_price") or perp.get("mark_price") or 0.0)
+    if not math.isfinite(spot) or spot<=0:
+        raise ValueError("Invalid Deribit index price")
     # variation 24 h du perp ramenée en points d'index (repris comme « J-1 »)
     chg = perp.get("price_change")
     prev = spot / (1.0 + float(chg) / 100.0) if chg not in (None, 0) else spot
@@ -167,43 +188,57 @@ def chain_from_deribit(symbol: str, raw: dict) -> Chain:
         exp_epoch=exp_epoch,
         exp_days=(exp_epoch - ts_epoch) / 86400.0,
         multiplier=1.0,
+        **model_inputs(symbol, ts_epoch),
     )
 
 
-def _gamma_at(chain: Chain, spot: float, filt: str) -> tuple:
-    """Vectorised BS gamma at a hypothetical spot + masks. Returns
-    (mask, gamma, T)."""
-    max_days = FILTERS.get(filt)
-    T = (chain.exp_epoch - chain.ts_epoch) / YEAR_SECONDS
-    if max_days is not None:
-        if max_days == 0:
-            # 0DTE: expires today (ET calendar)
-            day0 = datetime.fromtimestamp(chain.ts_epoch, ET).replace(
-                hour=23, minute=59)
-            keep = chain.exp_epoch <= day0.timestamp()
-        else:
-            keep = chain.exp_days <= max_days
-    else:
-        keep = np.ones(len(T), dtype=bool)
-    mask = keep & (T > 1e-6) & (chain.oi > 0)
+def _valuation_epoch(valuation_time: float | None) -> float:
+    return datetime.now(timezone.utc).timestamp() if valuation_time is None else valuation_time
 
+
+def _mask_for(chain: Chain, filt: str, valuation_time: float | None = None) -> np.ndarray:
+    """Calendar filters at valuation time; never silently substitute another expiry.
+
+    Equity dates use New York; Deribit expiries use UTC (08:00 settlement).
+    Explicit valuation_time is required when reconstructing a past snapshot.
+    """
+    now = _valuation_epoch(valuation_time)
+    max_days = FILTERS.get(filt)
+    remaining = chain.exp_epoch - now
+    keep = remaining > 0
+    if max_days == 0:
+        tz = timezone.utc if chain.symbol == "BTC" else ET
+        day = datetime.fromtimestamp(now, tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        keep &= (chain.exp_epoch >= day.timestamp()) & (chain.exp_epoch < (day + timedelta(days=1)).timestamp())
+    elif max_days is not None:
+        keep &= remaining <= max_days * 86400
+    return keep & (chain.oi > 0)
+
+
+def _gamma_at(chain: Chain, spot: float, filt: str,
+              valuation_time: float | None = None) -> tuple:
+    """Vectorised BS gamma. Live time by default, explicit time for replay."""
+    now = _valuation_epoch(valuation_time)
+    T = (chain.exp_epoch - now) / YEAR_SECONDS
+    mask = _mask_for(chain, filt, now)
     gamma = np.zeros(len(T))
     good = mask & (chain.iv > 1e-4)
     if good.any():
-        K = chain.strike[good]
-        s = chain.iv[good]
-        t = T[good]
-        d1 = (np.log(spot / K) + (RISK_FREE + 0.5 * s * s) * t) / (s * np.sqrt(t))
-        gamma[good] = _npdf(d1) / (spot * s * np.sqrt(t))
+        K, vol = chain.strike[good], chain.iv[good]
+        # Numerical floor only: expired contracts remain excluded by mask.
+        t = np.maximum(T[good], 1.0 / YEAR_SECONDS)
+        d1 = (np.log(spot / K) + (rates_for(chain, t) - chain.dividend_yield + 0.5 * vol * vol) * t) / (vol * np.sqrt(t))
+        gamma[good] = np.exp(-chain.dividend_yield*t) * _npdf(d1) / (spot * vol * np.sqrt(t))
     fb = mask & (chain.iv <= 1e-4) & (chain.feed_gamma > 0)
-    if fb.any():
-        gamma[fb] = chain.feed_gamma[fb] * (chain.spot / spot) ** 2
+    gamma[fb] = chain.feed_gamma[fb] * (chain.spot / spot) ** 2
     return mask, gamma, T
 
 
-def gex_at(chain: Chain, spot: float, filt: str = "all") -> np.ndarray:
+def gex_at(chain: Chain, spot: float, filt: str = "all",
+           valuation_time: float | None = None) -> np.ndarray:
     """Per-contract dealer GEX ($ per 1% move) at a given spot."""
-    mask, gamma, _ = _gamma_at(chain, spot, filt)
+    valuation_time = _valuation_epoch(valuation_time)
+    mask, gamma, _ = _gamma_at(chain, spot, filt, valuation_time)
     sign = np.where(chain.is_call, 1.0, -1.0)
     gex = np.zeros(len(gamma))
     gex[mask] = (sign[mask] * gamma[mask] * chain.oi[mask] * spot * spot
@@ -211,27 +246,11 @@ def gex_at(chain: Chain, spot: float, filt: str = "all") -> np.ndarray:
     return gex
 
 
-def _mask_for(chain: Chain, filt: str) -> np.ndarray:
-    """Masque d'échéance/OI indépendamment du spot."""
-    max_days = FILTERS.get(filt)
-    T = (chain.exp_epoch - chain.ts_epoch) / YEAR_SECONDS
-    if max_days is not None:
-        if max_days == 0:
-            day0 = datetime.fromtimestamp(chain.ts_epoch, ET).replace(
-                hour=23, minute=59)
-            keep = chain.exp_epoch <= day0.timestamp()
-        else:
-            keep = chain.exp_days <= max_days
-    else:
-        keep = np.ones(len(T), dtype=bool)
-    return keep & (T > 1e-6) & (chain.oi > 0)
-
-
 def gex_matrix(chain: Chain, spots, filt: str = "all", chunk: int = 24):
     """Matrice (n_strikes × n_temps) du GEX net dealer, chaque colonne
     re-pricée en Black-Scholes au spot historique correspondant.
-    (OI constant intra-jour → reconstruction exacte pour une session.)"""
-    mask = _mask_for(chain, filt)
+    (Reconstruction indicative : OI, IV et temps du snapshot constants.)"""
+    mask = _mask_for(chain, filt, chain.ts_epoch)
     K = chain.strike[mask]
     iv = chain.iv[mask]
     oi = chain.oi[mask]
@@ -253,10 +272,10 @@ def gex_matrix(chain: Chain, spots, filt: str = "all", chunk: int = 24):
     for t0 in range(0, nT, chunk):
         S = spots[t0:t0 + chunk]
         d1 = (np.log(S[None, :] / Kg[:, None])
-              + (RISK_FREE + 0.5 * ivg ** 2)[:, None] * Tg[:, None]) \
+              + (rates_for(chain, Tg) - chain.dividend_yield + 0.5 * ivg ** 2)[:, None] * Tg[:, None]) \
             / (ivg[:, None] * sqrtT[:, None])
         g = np.zeros((len(K), len(S)))
-        g[good] = _npdf(d1) / (S[None, :] * ivg[:, None] * sqrtT[:, None])
+        g[good] = np.exp(-chain.dividend_yield*Tg[:, None]) * _npdf(d1) / (S[None, :] * ivg[:, None] * sqrtT[:, None])
         if fb.any():
             g[fb] = fg[fb][:, None] * (chain.spot / S[None, :]) ** 2
         gex = base[:, None] * g * (S ** 2)[None, :]
@@ -266,9 +285,11 @@ def gex_matrix(chain: Chain, spots, filt: str = "all", chunk: int = 24):
 
 
 def compute_profile(chain: Chain, spot: float, filt: str = "all",
-                    compute_zero: bool = True, win: float = 0.03) -> dict:
+                    compute_zero: bool = True, win: float = 0.03,
+                    valuation_time: float | None = None) -> dict:
     """Full GEX profile aggregated by strike + key levels."""
-    mask, gamma, _ = _gamma_at(chain, spot, filt)
+    valuation_time = _valuation_epoch(valuation_time)
+    mask, gamma, _ = _gamma_at(chain, spot, filt, valuation_time)
     sign = np.where(chain.is_call, 1.0, -1.0)
     gex = (sign[mask] * gamma[mask] * chain.oi[mask] * spot * spot * 0.01
            * chain.multiplier)
@@ -288,6 +309,14 @@ def compute_profile(chain: Chain, spot: float, filt: str = "all",
     net = call_gex + put_gex
 
     out: dict = {
+        "available": bool(mask.any()),
+        "filtered_contracts": int(mask.sum()),
+        "filtered_oi": float(chain.oi[mask].sum()),
+        "valuation_time": valuation_time,
+        "reason": None if mask.any() else (
+            "Aucune option non expirée avec OI positif pour ce filtre. "
+            "Le 0DTE ne contient que les échéances du jour (ET pour actions, UTC pour BTC). "
+            "Après expiration, le week-end ou sans OI publié : aucun niveau à afficher."),
         "strikes": strikes.tolist(),
         "call_gex": call_gex.tolist(),
         "put_gex": put_gex.tolist(),
@@ -299,7 +328,7 @@ def compute_profile(chain: Chain, spot: float, filt: str = "all",
     # ---- key levels -------------------------------------------------------
     levels = compute_levels(chain, spot, filt, strikes, call_gex, put_gex,
                             net, call_oi, put_oi, compute_zero=compute_zero,
-                            win=win)
+                            win=win, valuation_time=valuation_time)
     out.update(levels)
     return out
 
@@ -310,7 +339,7 @@ def compute_walls(strikes, call_gex, put_gex, call_oi, put_oi, net,
 
     - call walls  : top `topn` strikes AU-DESSUS du spot, classes par call GEX
     - put walls   : top `topn` strikes EN-DESSOUS du spot, classes par |put GEX|
-    - gamma flip  : strike ou le GEX net CUMULE change de signe
+    - gamma flip  : computed separately from aggregate GEX vs hypothetical spot
     - max pain    : strike minimisant le payout total des option holders
     Le tout dans une fenetre +/- `win` autour du spot (defaut 3 %).
     """
@@ -332,52 +361,39 @@ def compute_walls(strikes, call_gex, put_gex, call_oi, put_oi, net,
                  "oi": float(oi[i])} for i in order[:topn]]
 
     cm = w & (strikes > spot) & (call_gex > 0)
-    if not cm.any():
-        cm = w & (strikes > spot)
-    if not cm.any():
-        cm = strikes > spot
+    if not cm.any(): cm = (strikes > spot) & (call_gex > 0)
     pm = w & (strikes < spot) & (put_gex < 0)
-    if not pm.any():
-        pm = w & (strikes < spot)
-    if not pm.any():
-        pm = strikes < spot
+    if not pm.any(): pm = (strikes < spot) & (put_gex < 0)
     call_w = _top(cm, call_gex, call_oi, True)
     put_w = _top(pm, put_gex, put_oi, False)
 
-    # gamma flip : croisement zero du GEX net cumule (borne a +/- 2 fenetres)
+    # Cumulative strike crossings are NOT a dealer gamma flip.
     flip = None
-    if len(strikes) > 2:
-        cum = np.cumsum(net)
-        sgn = np.sign(cum)
-        cross = np.where((sgn[:-1] != 0) & (sgn[1:] != 0)
-                         & (sgn[:-1] != sgn[1:]))[0]
-        near = [i for i in cross
-                if abs(strikes[i] - spot) <= 2 * win * spot
-                or abs(strikes[i + 1] - spot) <= 2 * win * spot]
-        if near:
-            i = min(near, key=lambda j: abs(strikes[j] - spot))
-            s0, s1 = strikes[i], strikes[i + 1]
-            t0, t1 = cum[i], cum[i + 1]
-            z = s0 + (s1 - s0) * (-t0) / (t1 - t0) if t1 != t0 else s0
-            flip = float(s0 if abs(z - s0) <= abs(z - s1) else s1)
-
-    # max pain : payout minimal pour les holders (calls + puts)
-    pain_strike = None
-    if len(strikes) > 2:
-        d = strikes[:, None] - strikes[None, :]
-        payout = (np.clip(d, 0, None) * call_oi[None, :]
-                  + np.clip(-d, 0, None) * put_oi[None, :]).sum(axis=1)
-        pain_strike = float(strikes[int(np.argmin(payout))])
+    pain_strike = max_pain(strikes, call_oi, put_oi)
 
     return {"call": call_w, "put": put_w, "flip": flip, "pain": pain_strike}
+
+
+def max_pain(strikes, call_oi, put_oi) -> float | None:
+    """Minimum option-holder payout, O(n log n), shared by all views."""
+    k = np.asarray(strikes, dtype=float)
+    if not len(k):
+        return None
+    order = np.argsort(k)
+    k = k[order]
+    c, p = np.asarray(call_oi, dtype=float)[order], np.asarray(put_oi, dtype=float)[order]
+    cq, cv = np.cumsum(c), np.cumsum(c * k)
+    pq, pv = np.cumsum(p), np.cumsum(p * k)
+    payout = k * cq - cv + (pv[-1] - pv) - k * (pq[-1] - pq)
+    return float(k[np.argmin(payout)])
 
 
 def compute_levels(chain: Chain, spot: float, filt: str,
                    strikes=None, call_gex=None, put_gex=None, net=None,
                    call_oi=None, put_oi=None, compute_zero: bool = True,
-                   win: float = 0.03) -> dict:
+                   win: float = 0.03, valuation_time: float | None = None) -> dict:
     if strikes is None:
-        prof = compute_profile(chain, spot, filt, compute_zero=False, win=win)
+        prof = compute_profile(chain, spot, filt, compute_zero=False, win=win, valuation_time=valuation_time)
         strikes = np.asarray(prof["strikes"])
         call_gex = np.asarray(prof["call_gex"])
         put_gex = np.asarray(prof["put_gex"])
@@ -390,13 +406,13 @@ def compute_levels(chain: Chain, spot: float, filt: str,
     # walls structurels (gros OI, bande +/-10 %) : contexte swing uniquement
     def _oi_wall(oi_arr: np.ndarray, above: bool, band: float = 0.10):
         if above:
-            cand = np.where((strikes >= spot) & (strikes <= spot * (1 + band)))[0]
+            cand = np.where((oi_arr > 0) & (strikes >= spot) & (strikes <= spot * (1 + band)))[0]
             if not len(cand):
-                cand = np.where(strikes >= spot)[0]
+                cand = np.where((oi_arr > 0) & (strikes >= spot))[0]
         else:
-            cand = np.where((strikes <= spot) & (strikes >= spot * (1 - band)))[0]
+            cand = np.where((oi_arr > 0) & (strikes <= spot) & (strikes >= spot * (1 - band)))[0]
             if not len(cand):
-                cand = np.where(strikes <= spot)[0]
+                cand = np.where((oi_arr > 0) & (strikes <= spot))[0]
         if not len(cand):
             return None
         return float(strikes[cand[int(np.argmax(oi_arr[cand]))]])
@@ -407,57 +423,73 @@ def compute_levels(chain: Chain, spot: float, filt: str,
     walls = compute_walls(strikes, call_gex, put_gex, call_oi, put_oi, net,
                           spot, win=win) if len(strikes) else {
         "call": [], "put": [], "flip": None, "pain": None}
-    call_wall = walls["call"][0]["strike"] if walls["call"] else struct_call
-    put_wall = walls["put"][0]["strike"] if walls["put"] else struct_put
+    call_wall = walls["call"][0]["strike"] if walls["call"] else None
+    put_wall = walls["put"][0]["strike"] if walls["put"] else None
 
     # gamma peaks (reference intraday)
     gamma_peak_call = float(strikes[int(np.argmax(call_gex))]) if len(strikes) and call_gex.max() > 0 else None
     gamma_peak_put = float(strikes[int(np.argmin(put_gex))]) if len(strikes) and put_gex.min() < 0 else None
 
     # expected move (1 sigma, daily) from IV30
-    sigma_d = spot * (chain.iv30 / 100.0) / math.sqrt(252.0) if chain.iv30 else 0.0
+    sigma_d = spot * (chain.iv30 / 100.0) / math.sqrt(365.0 if chain.symbol == "BTC" else 252.0) if chain.iv30 else 0.0
 
     zero = None
     if compute_zero and len(strikes):
-        zero = _zero_gex(chain, spot, filt)
+        zero = _zero_gex(chain, spot, filt, valuation_time)
 
+    walls["flip"] = zero
     return {
         "spot": spot,
         "net_gex_total": net_total,
-        "regime": "long_gamma" if net_total >= 0 else "short_gamma",
+        "regime": ("unavailable" if not len(strikes) or not (np.abs(call_gex).sum()+np.abs(put_gex).sum()) else
+                   "neutral" if abs(net_total) < 1e-9 else
+                   "long_gamma" if net_total > 0 else "short_gamma"),
         "call_wall": call_wall,
         "put_wall": put_wall,
         "struct_call": struct_call,
         "struct_put": struct_put,
         "walls": walls,
-        "gamma_flip": walls["flip"],
+        "gamma_flip": zero,
         "max_pain": walls["pain"],
         "window_pct": win * 100,
         "gamma_peak_call": gamma_peak_call,
         "gamma_peak_put": gamma_peak_put,
         "zero_gex": zero,
         "em_sigma": sigma_d,
-        "em_up": spot + sigma_d,
-        "em_down": spot - sigma_d,
+        "em_up": spot + sigma_d if len(strikes) else None,
+        "em_down": spot - sigma_d if len(strikes) else None,
         "iv30": chain.iv30,
     }
 
 
-def _zero_gex(chain: Chain, spot: float, filt: str) -> float | None:
+def _zero_gex(chain: Chain, spot: float, filt: str,
+              valuation_time: float | None = None) -> float | None:
     """Nearest spot level (to current) where aggregate dealer gamma flips sign."""
+    valuation_time = _valuation_epoch(valuation_time)
     grid = spot * np.linspace(0.86, 1.14, 161)
     totals = np.empty(len(grid))
     for i, s in enumerate(grid):
-        totals[i] = gex_at(chain, float(s), filt).sum()
+        totals[i] = gex_at(chain, float(s), filt, valuation_time).sum()
     signs = np.sign(totals)
-    flips = np.where(signs[:-1] * signs[1:] < 0)[0]
-    if not len(flips):
-        return None
+    nonzero = np.flatnonzero(totals != 0)
+    brackets = [(int(a),int(b)) for a,b in zip(nonzero[:-1],nonzero[1:]) if np.sign(totals[a])*np.sign(totals[b])<0]
+    if not brackets:
+        return None  # underflow to zero in a tail is not a regime crossing
     # linear interpolation, pick crossing nearest current spot
     best, bestd = None, 1e18
-    for i in flips:
-        s0, s1, t0, t1 = grid[i], grid[i + 1], totals[i], totals[i + 1]
-        z = s0 + (s1 - s0) * (-t0) / (t1 - t0)
+    for i,j in brackets:
+        s0, s1, t0, t1 = grid[i], grid[j], totals[i], totals[j]
+        for _ in range(24):
+            mid = (s0 + s1) / 2
+            total = float(gex_at(chain, mid, filt, valuation_time).sum())
+            if total == 0:
+                s0 = s1 = mid
+                break
+            if np.sign(t0) * np.sign(total) < 0:
+                s1 = mid
+            else:
+                s0, t0 = mid, total
+        z = (s0 + s1) / 2
         d = abs(z - spot)
         if d < bestd:
             best, bestd = float(z), d

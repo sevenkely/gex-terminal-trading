@@ -3,21 +3,22 @@ Live price engine — pluggable tick source.
 
 Modes (per symbol)
 ------------------
-SIM     : realistic random-walk ticks seeded from the CBOE delayed snapshot
-          price, with weak mean reversion. Runs anywhere, no account needed.
-RITHMIC : real ticks pushed by RithmicBridge (see rithmic_bridge.py) via
-          set_external(). A symbol falls back to SIM automatically if its
-          external ticks go stale (> EXTERNAL_STALE seconds).
+DELAYED : last source snapshot, frozen until refresh (default without live feed).
+SIM     : explicit GEX_DEMO_MODE only, never an automatic failover.
+RITHMIC / DERIBIT : external price ticks.
+STALE   : missing external ticks (> EXTERNAL_STALE seconds), last price frozen.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import math
+import os
 import random
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from market_calendar import session_info
 
 log = logging.getLogger("live_feed")
 
@@ -37,19 +38,7 @@ def market_open(symbol: str, ts: float | None = None) -> bool:
     cash (lun-ven 9 h 30 - 16 h), quasi 24 h pour les futures CME (dim 18 h →
     ven 17 h, pause 17-18 h), toujours ouvert pour la crypto. Sert à figer les
     ticks SIM hors séance."""
-    if symbol in CRYPTO_SYMBOLS:
-        return True
-    dt = datetime.fromtimestamp(ts if ts is not None else time.time(), ET)
-    day, minute = dt.weekday(), dt.hour * 60 + dt.minute   # lundi = 0
-    if symbol in FUTURES_SYMBOLS:
-        if day == 4 and minute >= 17 * 60:      # vendredi après 17 h
-            return False
-        if day == 5:                            # samedi
-            return False
-        if day == 6 and minute < 18 * 60:       # dimanche avant 18 h
-            return False
-        return not (17 * 60 <= minute < 18 * 60)
-    return day < 5 and 9 * 60 + 30 <= minute < 16 * 60
+    return session_info(symbol, ts)["open"]
 
 
 class PriceEngine:
@@ -61,6 +50,7 @@ class PriceEngine:
         self.events: dict[str, asyncio.Event] = {}
         self.modes: dict[str, str] = {}         # SIM / RITHMIC per symbol
         self.external_ts: dict[str, float] = {}
+        self.on_external = None
 
     # ------------------------------------------------------------------ setup
     def seed(self, symbol: str, price: float, iv30: float) -> None:
@@ -69,42 +59,47 @@ class PriceEngine:
             self.prices[symbol] = price
         self.sigma_daily[symbol] = max(iv30, 1.0) / 100.0 / math.sqrt(252.0)
         self.events.setdefault(symbol, asyncio.Event())
-        self.modes.setdefault(symbol, "SIM")
+        self.modes.setdefault(symbol, "SIM" if os.getenv("GEX_DEMO_MODE", "").lower() in ("1", "true", "yes") else "DELAYED")
 
     def rebase(self, symbol: str, price: float, iv30: float) -> None:
         """Chain refresh: move the anchor; keep live price continuity."""
         self.seed(symbol, price, iv30)
+        if self.mode_for(symbol) == "DELAYED":
+            self.prices[symbol] = price
 
     # --------------------------------------------------------- external feed
     def set_external(self, symbol: str, price: float, ts: float,
                      mode: str = "RITHMIC") -> None:
+        if not math.isfinite(price) or price <= 0 or not math.isfinite(ts) or ts>time.time()+5:
+            return
+        if ts < self.external_ts.get(symbol, 0):
+            return  # ignore late/out-of-order ticks
         self.prices[symbol] = price
         self.external_ts[symbol] = ts
         self.modes[symbol] = mode
         self.last_tick[symbol] = ts
+        if self.on_external is not None:
+            self.on_external(symbol, price, ts, mode)
         ev = self.events.get(symbol)
         if ev:
             ev.set()
 
     def drop_external(self, symbol: str) -> None:
         self.external_ts.pop(symbol, None)
-        self.modes[symbol] = "SIM"
+        self.modes[symbol] = "STALE"
 
     def mode_for(self, symbol: str) -> str:
-        mode = self.modes.get(symbol)
-        if mode in EXTERNAL_MODES:
-            if time.time() - self.external_ts.get(symbol, 0) > EXTERNAL_STALE:
-                self.modes[symbol] = "SIM"     # feed stale -> back to SIM
-            else:
-                return mode
-        return self.modes.get(symbol, "SIM")
+        mode = self.modes.get(symbol, "DELAYED")
+        if mode in EXTERNAL_MODES and time.time() - self.external_ts.get(symbol, 0) > EXTERNAL_STALE:
+            return "STALE"
+        return mode
 
     # ------------------------------------------------------------------- loop
     async def run_sim(self) -> None:
         rng = random.Random(1234)
         while True:
             for sym, px in list(self.prices.items()):
-                if self.mode_for(sym) in EXTERNAL_MODES:
+                if self.mode_for(sym) != "SIM":
                     continue                   # real ticks drive this symbol
                 if not market_open(sym):
                     # hors séance : prix figé (pas de dérive SIM trompeuse),

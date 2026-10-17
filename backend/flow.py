@@ -19,9 +19,10 @@ peuvent dépasser 100/s sur ES).
 from __future__ import annotations
 
 import statistics
+import math
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
@@ -64,6 +65,7 @@ DEFAULT_CALIB = {"tick": 0.25, "min_big": MIN_BIG, "k_big": K_BIG,
 
 def calib_for(symbol: str, kind: str = "perp") -> dict:
     out = dict(DEFAULT_CALIB)
+    out["tick"] = TICK_SIZES.get(symbol, out["tick"])
     out.update(CALIB.get(symbol, {}))
     out.update(CALIB.get(f"{symbol}-OPTIONS", {}) if kind == "options" else {})
     return out
@@ -107,6 +109,11 @@ class SymbolFlow:
         self.absorb.clear()
         self.last_price: float | None = None
         self.last_ts: float | None = None
+        self.recent.clear()
+        self.sizes.clear()
+        self._median = 1.0
+        self._median_ts = 0.0
+        self._last_absorb = {"buy":0.0, "sell":0.0}
 
     def _median_size(self, now: float) -> float:
         if now - self._median_ts > 1.0 and self.sizes:
@@ -117,7 +124,15 @@ class SymbolFlow:
     # ----------------------------------------------------------------- add
     def add(self, ts: float, price: float, size: float, aggressor: int,
             instrument: str | None = None) -> None:
-        day = datetime.fromtimestamp(ts, ET).date().isoformat()
+        if not all(math.isfinite(v) for v in (ts, price, size)) or price <= 0 or size <= 0:
+            return
+        if self.last_ts is not None and ts < self.last_ts:
+            return  # do not rewrite closed bars or reset session with a late print
+        if self.symbol.startswith("BTC"):
+            day = datetime.fromtimestamp(ts, timezone.utc).date().isoformat()
+        else:
+            dt = datetime.fromtimestamp(ts, ET)
+            day = (dt.date() + timedelta(days=1) if self.symbol in TICK_SIZES and dt.hour >= 18 else dt.date()).isoformat()
         if day != self.day:
             self.reset_session(day)
 

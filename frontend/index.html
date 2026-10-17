@@ -36,9 +36,9 @@
         <span id="et-clock" class="mono"></span>
       </div>
       <div id="mode-chip" class="chip sim" title="Source des ticks temps réel">
-        <span class="dot"></span><span id="mode-label">SIM</span>
+        <span class="dot"></span><span id="mode-label">ATTENTE DONNÉES</span>
       </div>
-      <button id="settings-btn" class="icon-btn" title="Connexion Rithmic — paramètres" aria-label="Paramètres">
+      <button id="settings-btn" class="icon-btn" title="Données temps réel Rithmic — paramètres" aria-label="Paramètres">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"/>
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -101,6 +101,21 @@
         </div>
       </div>
 
+      <div id="data-toolbar">
+          <div id="filters" class="seg small">
+            <button data-f="all" class="active">ALL</button>
+            <button data-f="0dte">0DTE</button>
+            <button data-f="weekly">≤7D</button>
+            <button data-f="monthly">≤35D</button>
+          </div>
+        <label for="session-select">Session</label>
+        <select id="session-select" aria-label="Session VWAP et profil"><option value="auto">Auto</option><option value="rth">RTH 09:30–16:00 ET</option><option value="eth">CME 18:00–17:00 ET</option><option value="utc">Crypto 00:00 UTC</option></select>
+        <span id="filter-summary" class="mono" aria-live="polite">Chargement des échéances…</span>
+        <details id="methodology"><summary>Méthodologie</summary><p>VWAP approximatif à partir des bougies ; profil de volume estimé OHLCV, pas du volume-at-price. GEX estimé : calls positifs / puts négatifs. Le positionnement dealer n'est pas observé. CW/PW = pics gamma ; walls OI = concentrations structurelles. FLIP = zéro du GEX agrégé selon le spot. OI CBOE quotidien, chaîne différée. ES/NQ/GC : niveaux cash projetés, pas de gamma natif futures. Max pain agrégé : descriptif, pas une cible de prix.</p></details>
+      </div>
+      <div id="feed-warning" role="status" hidden></div>
+      <div id="expiry-empty" role="status" hidden><div><strong id="expiry-empty-title">Aucune échéance disponible</strong><p id="expiry-empty-detail"></p></div><button id="expiry-show-all" class="btn">Voir ALL</button></div>
+      <div id="data-quality" class="mono" aria-live="polite"></div>
       <div id="chart-wrap">
       <div id="chart-area">
         <div id="chart"></div>
@@ -209,8 +224,9 @@
             <label>CHOC IV <b id="sc-iv-v" class="mono">+0.0 pt</b></label>
             <input id="sc-iv" type="range" min="-10" max="10" step="0.5" value="0">
           </div>
+          <div class="sc-row"><label>TEMPS ÉCOULÉ <b id="sc-time-v" class="mono">+0 min</b></label><input id="sc-time" type="range" min="0" max="240" step="5" value="0"></div>
           <div class="sc-grid mono" id="sc-out"></div>
-          <div class="sc-foot muted">Re-pricing Black-Scholes de la chaîne du jour au spot / IV hypothétiques — open interest inchangé. Lignes orange = niveaux du scénario sur le chart.</div>
+          <div class="sc-foot muted">Re-pricing Black-Scholes de la chaîne du jour au spot / IV / temps hypothétiques — open interest inchangé. Lignes orange = niveaux du scénario sur le chart.</div>
         </div>
       </div>
       <canvas id="gex-strip"></canvas>
@@ -234,7 +250,49 @@
         <button data-p="alerts">ALERTES</button>
         <button data-p="flow">FLUX</button>
         <button data-p="fut">FUTURES</button>
+        <button data-p="research">RECHERCHE</button>
+        <button data-p="validation">VALIDATION</button>
         <button data-p="deriv" id="tab-deriv" hidden>DÉRIVÉS</button>
+      </div>
+      <div class="sb-panel" id="sbp-validation">
+        <section class="research-card"><h2>État opérationnel</h2><button id="diagnostics-refresh" class="btn">Vérifier</button><div id="diagnostics-state" class="mono" role="status">Non vérifié</div><p class="muted">Ces contrôles ne remplacent pas une recette avec les fournisseurs. Une configuration de flux ne prouve pas les droits de marché.</p></section>
+        <section class="research-card"><h2>Simulation sur ticks enregistrés</h2><p class="muted">ES/NQ/GC directs uniquement. Entrée au tick suivant, niveau figé connu avant le signal, coûts défavorables explicites. Pas de garantie de remplissage ni de rentabilité.</p>
+          <form id="backtest-form" class="validation-form">
+            <label>Début UTC<input id="bt-start" type="datetime-local" required></label><label>Fin UTC<input id="bt-end" type="datetime-local" required></label>
+            <label>Niveau<select id="bt-level"><option value="call_wall">Call wall</option><option value="put_wall">Put wall</option><option value="zero_gex">Zero gamma</option></select></label>
+            <label>Hypothèse<select id="bt-strategy"><option value="breakout">Franchissement</option><option value="reversion">Retour vers le niveau</option></select></label>
+            <label>Horizon (secondes)<input id="bt-horizon" type="number" min="1" max="3600" value="60" required></label>
+            <label>Commission aller-retour USD<input id="bt-fees" type="number" min="0" max="1000" step=".01" value="5" required></label>
+            <label>Spread supposé (ticks)<input id="bt-spread" type="number" min="0" max="100" step=".25" value="1" required></label>
+            <label>Slippage par côté (ticks)<input id="bt-slippage" type="number" min="0" max="100" step=".25" value="1" required></label>
+            <button id="bt-run" class="btn" type="submit">Évaluer — filtre du graphique</button>
+          </form><p class="muted">Séparation chronologique fixe 70 % entraînement / 30 % test, sans recherche de paramètres. Trades traversant la séparation exclus.</p>
+          <div id="backtest-result" class="mono" role="status"></div><button id="bt-export" class="btn" disabled>Exporter le rapport</button>
+        </section>
+      </div>
+      <div class="sb-panel" id="sbp-research">
+        <section class="research-card">
+          <h2>Transactions options observées</h2>
+          <p class="muted">Deribit BTC uniquement. Actions/CME : aucun fournisseur de transactions options connecté.</p>
+          <div class="research-controls"><label>Type<select id="opt-kind"><option value="all">Calls + puts</option><option value="C">Calls</option><option value="P">Puts</option></select></label><label>Prime min. USD<input id="opt-minimum" type="number" min="0" max="1000000000" value="0" step="1000"></label><button id="research-refresh" class="btn">Actualiser</button></div>
+          <p id="opt-status" class="muted" role="status"></p>
+          <div class="research-scroll"><table class="research-table"><thead><tr><th>Heure UTC</th><th>Contrat</th><th>Sens</th><th>Qté</th><th>Prime $</th><th>IV</th></tr></thead><tbody id="opt-rows"></tbody></table></div>
+          <p class="muted">Bid/ask et delta au trade, multi-leg, ouverture/fermeture : inconnus. Le sens ne constitue pas un signal directionnel.</p>
+          <h3>Concentrations de l'échantillon</h3><div id="opt-concentrations" class="mono"></div>
+        </section>
+        <section class="research-card">
+          <h2>Historique point-in-time</h2>
+          <p class="muted">Niveaux enregistrés toutes les 30 s, filtre du graphique. Explorateur de snapshots, pas un replay tick par tick. Les prix simulés sont exclus.</p>
+          <input id="replay-range" type="range" min="0" max="0" value="0" aria-label="Snapshot historique">
+          <div id="replay-detail" class="mono" role="status">Aucun snapshot enregistré.</div>
+          <button id="research-export" class="btn">Exporter les données affichées</button>
+        </section>
+        <section class="research-card"><h2>Vanna / Charm estimés</h2><div id="risk-sensitivities" class="mono"></div><p id="risk-limitation" class="muted"></p></section>
+        <section class="research-card">
+          <h2>OI : observations quotidiennes</h2>
+          <p class="muted">Dernière observation de chaque jour, pas la date officielle de publication. Différences incluant expirations et changements de couverture.</p>
+          <div id="oi-observations" class="mono"></div>
+        </section>
       </div>
       <div class="sb-panel active" id="sbp-gex">
       <div class="card" id="zonemap-card">
@@ -277,8 +335,8 @@
             <button data-t="pain" class="ltgl" style="--c:#e8ecf4">PAIN</button>
             <button data-t="hist" class="ltgl active" style="--c:#8b93a7">HIST γ</button>
             <button data-t="band" class="ltgl active" style="--c:#8b93a7">BANDES</button>
-            <button data-t="vwap" class="ltgl active" style="--c:#e8ecf4">VWAP</button>
-            <button data-t="prof" class="ltgl active" style="--c:#8b93a7">PROFILE</button>
+            <button data-t="vwap" class="ltgl active" style="--c:#e8ecf4">VWAP EST.</button>
+            <button data-t="prof" class="ltgl active" style="--c:#8b93a7">PROFIL EST.</button>
             <button data-t="heat" class="ltgl active" style="--c:#8b93a7">HEAT γ</button>
           </div>
         </div>
@@ -304,9 +362,9 @@
             <div class="tile-sub" id="lv-maxpain-note"></div>
           </div>
           <div class="tile">
-            <div class="tile-label">PIN SCORE · séance</div>
+            <div class="tile-label">PROXIMITÉ FLIP · séance</div>
             <div class="tile-value yellow" id="lv-pin">—</div>
-            <div class="tile-sub" id="lv-pin-note">prob. de pinning gamma</div>
+            <div class="tile-sub" id="lv-pin-note">Indice heuristique, pas une probabilité</div>
             <div class="gauge" id="pin-gauge" style="--sc:0"></div>
           </div>
           <div class="tile">
@@ -353,12 +411,7 @@
       <div class="card grow" id="profile-card">
         <div class="card-head">
           <h2>Profil GEX par strike</h2>
-          <div id="filters" class="seg small">
-            <button data-f="all" class="active">ALL</button>
-            <button data-f="0dte">0DTE</button>
-            <button data-f="weekly">≤7D</button>
-            <button data-f="monthly">≤35D</button>
-          </div>
+
         </div>
         <div id="profile-head-row" class="prow head muted mono"><span>STRIKE</span><span>GEX NET ($ / 1 %)</span></div>
         <div id="profile"></div>
@@ -414,7 +467,7 @@
           <span class="head-badges"><span class="badge proxy" id="react-note">—</span></span>
         </div>
         <div id="react-table"></div>
-        <div class="muted" id="react-foot">Touche = mèche qui traverse le niveau (historique affiché, une par passage). Tenue = clôture 5 bougies plus tard du même côté qu'à la touche · MV = amplitude moyenne du mouvement en bps.</div>
+        <div class="muted" id="react-foot">Exploration rétrospective uniquement : niveaux actuels appliqués au passé, pas un backtest ni une probabilité de réussite. Touche = mèche qui traverse le niveau (historique affiché, une par passage). Tenue = clôture 5 bougies plus tard du même côté qu'à la touche · MV = amplitude moyenne du mouvement en bps.</div>
       </div>
 
       </div>
@@ -450,7 +503,7 @@
         </div>
         <div class="fl-head mono"><span>GROS TRADES</span><span id="fl-big-n"></span></div>
         <div id="fl-big" class="fl-list"></div>
-        <div class="fl-head mono"><span>ABSORPTION</span><span id="fl-abs-n"></span></div>
+        <div class="fl-head mono"><span id="fl-abs-label">ABSORPTION ESTIMÉE</span><span id="fl-abs-n"></span></div>
         <div id="fl-absorb" class="fl-list"></div>
         <div id="fl-note" class="muted"></div>
       </div>
@@ -497,7 +550,7 @@
         </div>
         <div id="dom-ladder"></div>
         <div id="dom-placeholder" class="muted">
-          Le carnet L2 s'affiche ici quand un compte <b>Rithmic</b> est connecté
+          Le carnet L2 s'affiche ici quand un accès aux données <b>Rithmic</b> est connecté
           (engrenage ⚙ en haut à droite) — profondeur CME requise sur l'abonnement market data.
         </div>
       </div>
@@ -512,24 +565,27 @@
   <div id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-head">
       <div>
-        <h2 id="modal-title">Connexion Rithmic</h2>
-        <small class="muted">Prix temps réel des futures — optionnel, le dashboard fonctionne en SIM sans compte</small>
+        <h2 id="modal-title">Données temps réel · Rithmic</h2>
+        <small class="muted">Analyse uniquement, sans passage d’ordres. Sans accès temps réel : sources publiques différées (~15 min selon la source et le rafraîchissement) ; BTC public temps réel.</small>
       </div>
       <button id="modal-close" class="icon-btn" aria-label="Fermer">✕</button>
     </div>
 
     <div class="modal-body">
+      <label class="admin-access">Jeton d'administration (GEX_ADMIN_TOKEN)<input id="admin-token" type="password" autocomplete="off" placeholder="Requis pour les paramètres Rithmic"></label>
+      <p class="muted">Jeton conservé uniquement en mémoire dans cet onglet. Le mot de passe Rithmic n'est plus enregistré sur disque ; utiliser RITHMIC_PASS dans l'environnement pour le démarrage automatique.</p>
+
       <div id="rith-status" class="rstatus disconnected">
         <span class="dot"></span>
         <div class="rs-text">
           <b id="rs-state">Déconnecté</b>
-          <span id="rs-msg" class="muted">Aucun compte configuré</span>
+          <span id="rs-msg" class="muted">Accès temps réel facultatif, non configuré</span>
         </div>
         <span id="rs-contracts" class="mono muted"></span>
       </div>
 
       <div class="form-section">
-        <h3>Identifiants</h3>
+        <h3>Identifiants de données de marché (facultatifs)</h3>
         <div class="form-grid">
           <label class="span2">Préréglage
             <select id="rt-preset"><option value="">— personnalisé —</option></select>
@@ -575,14 +631,14 @@
         <div class="ap-row"><label style="flex:none;font-size:9px">Appliquées aussi aux mèches, au volume, aux sparklines et au heatmap.</label></div>
         <p class="muted note">
           <b>direct</b> : prix du contrat futures brut · <b>anchor</b> : les variations Rithmic pilotent l'onglet cash sans saut de basis.
-          Les identifiants sont stockés localement dans <span class="mono">data/rithmic_config.json</span> (en clair — privilégiez un compte paper/trading).
+          Seuls les paramètres non secrets sont conservés dans <span class="mono">data/rithmic_config.json</span> ; le mot de passe reste en mémoire ou dans l’environnement. Aucun plant d’ordres ou P&amp;L n’est connecté.
           Les gateways de production peuvent exiger le test de <i>conformance</i> Rithmic ; utilisez d'abord « Rithmic Test » ou le gateway fourni par votre broker.
           <b>Système servi</b> : le gateway public <span class="mono">rituz00100.rithmic.com:443</span> ne sert que
           « Rithmic Test » ; « Rithmic Paper Trading » n'existe que sur les gateways
           <span class="mono">rprotocol-ie / -de / -sg</span>. Utilisez « Découvrir systèmes &amp; gateways »
           (templates 16 + 20, sans identifiant) pour lire la liste exacte avant de saisir un
           <span class="mono">system_name</span>. La conformance authentifie mais ne relaie pas les flux CME :
-          les onglets restent en SIM, et un contrat explicite (ex. ESM6) évite l'échec de résolution
+          les prix restent différés ou figés, et un contrat explicite (ex. ESM6) évite l'échec de résolution
           du front-month.
         </p>
       </div>
@@ -622,6 +678,10 @@
   </div>
 </div>
 
-<script src="app.js?v=2"></script>
+<div id="access-overlay" hidden><form id="access-form"><h2>Accès au terminal</h2><p id="access-message" role="status"></p><label>Jeton de lecture<input id="access-token" type="password" autocomplete="off" required></label><button type="submit" class="btn">Ouvrir la session</button></form></div>
+<script src="access.js?v=1"></script>
+<script src="app.js?v=4"></script>
+<script src="research.js?v=2"></script>
+<script src="validation.js?v=1"></script>
 </body>
 </html>

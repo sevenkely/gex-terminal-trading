@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from storage import write_json
 import os
 import time
 
@@ -35,8 +36,5 @@ def fetch_chain(symbol: str, force: bool = False) -> dict:
         r = c.get(URLS[symbol])
         r.raise_for_status()
         raw = r.json()
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(raw, f)
-    os.replace(tmp, path)
+    write_json(path, raw)
     return raw
