@@ -715,12 +715,16 @@ body.zen main { grid-template-columns: 1fr; }
   position: absolute; top: 0; left: 0; height: 26px; white-space: nowrap;
   display: flex; align-items: center; gap: 26px; padding-left: 12px;
   font-size: 10px; letter-spacing: .04em; color: var(--muted);
-  animation: tapeScroll 55s linear infinite;
+  animation: tapeScroll 160s linear infinite;
 }
 #tape:hover #tape-inner { animation-play-state: paused; }
 #tape-inner b { color: var(--text); font-weight: 600; }
 #tape-inner .tsep { color: var(--faint); }
 @keyframes tapeScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) {
+  #tape { overflow-x: auto; }
+  #tape-inner { animation: none; }
+}
 
 /* ================= B : cockpit — rail, ladder, HUD, ruban ================= */
 body.sb-collapsed #sb-rail { display: flex; }
