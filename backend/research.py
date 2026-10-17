@@ -70,12 +70,12 @@ class OptionTape:
             })
             return True
 
-    def snapshot(self, minimum=0., kind='all', expiry='all', limit=100):
+    def snapshot(self, minimum=0., kind='all', expiry='all', limit=100, contract=None):
         now = time.time()
         today = datetime.fromtimestamp(now, timezone.utc).date()
         with self.lock:
             rows = [dict(r) for r in self.rows
-                    if r['premium_usd'] >= minimum and (kind == 'all' or r['option_type'] == kind)
+                    if (contract is None or r['instrument']==contract) and r['premium_usd'] >= minimum and (kind == 'all' or r['option_type'] == kind)
                     and (expiry == 'all' or datetime.fromtimestamp(r['expiry'], timezone.utc).date() == today)]
         buckets = {}
         for r in rows:

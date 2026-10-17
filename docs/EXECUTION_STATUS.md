@@ -13,7 +13,7 @@ Un test synthétique réussi ne devient jamais une validation de données live.
 
 ## Preuves disponibles dans le dépôt
 
-Dernier passage : **48 tests pytest réussis**, tests `crypto_feed` hors ligne
+Dernier passage : **55 tests pytest réussis**, tests `crypto_feed` hors ligne
 réussis et contrôles de syntaxe JavaScript réussis. Un avertissement de
 dépréciation Starlette/httpx (TestClient) subsiste, sans échec.
 
@@ -58,3 +58,19 @@ Ne pas signer une mise en service tant que ces éléments n'ont pas de preuve :
 7. TLS, hosts, tokens séparés et monitoring configurés sur la cible.
 
 Les commandes et limites sont détaillées dans [OPERATIONS.md](OPERATIONS.md).
+
+
+## Cockpit inspiré des références visuelles
+
+Implémentation suivante : graphique et heatmap par échéance ancrés, Gamma/Vanna,
+cellules liées, niveaux/concentrations, vues Analyse/Focus/Recherche enregistrables,
+replay des observations et tableau de flow enrichi avec isolation par contrat.
+Tests navigateur desktop/tablette/mobile et tests de conservation des calculs.
+Voir [WORKSPACE.md](WORKSPACE.md) pour les unités, plafonds et limites.
+
+Restent conditionnés aux sources : dark pool, flow actions/CME effectif,
+pourcentages de variation d'une grille depuis l'ouverture et replay complet des
+bougies avec historique d'exposition. Aucun de ces éléments n'a été remplacé par
+une reconstitution présentée comme observée. Le lecteur livré porte uniquement
+sur les snapshots réellement enregistrés ; les bandes sont des concentrations du
+snapshot courant, pas une reproduction de la formule propriétaire de Bullflow.

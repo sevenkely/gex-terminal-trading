@@ -36,10 +36,11 @@ def build_research_router(option_tape, research_store, crypto_feed, FUTURES, _ch
     def api_option_flow(symbol: str, minimum: float = Query(0, ge=0, le=1e9, allow_inf_nan=False),
                         kind: str = Query("all", pattern="^(all|C|P)$"),
                         expiry: str = Query("all", pattern="^(all|0dte)$"),
-                        limit: int = Query(100, ge=1, le=500)):
+                        limit: int = Query(100, ge=1, le=500),
+                        contract: str | None = Query(None,max_length=128)):
         if symbol.upper() != "BTC":
-            return licensed_option_tape.snapshot(symbol.upper(),minimum,kind,expiry,limit)
-        return {**option_tape.snapshot(minimum, kind, expiry, limit),
+            return licensed_option_tape.snapshot(symbol.upper(),minimum,kind,expiry,limit,contract)
+        return {**option_tape.snapshot(minimum, kind, expiry, limit,contract),
                 "live":crypto_feed.status["state"] == "connected", "source":"DERIBIT"}
 
 

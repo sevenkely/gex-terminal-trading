@@ -124,7 +124,7 @@ function initChart() {
     localization: { priceFormatter: (p) => p.toLocaleString("en-US", { maximumFractionDigits: 2 }) },
   });
   const candles = chart.addSeries(LightweightCharts.CandlestickSeries, {
-    autoscaleInfoProvider: (original) => (state.fit ? levelsAutoscale() : original()),
+    autoscaleInfoProvider: (original) => (state.fit ? levelsAutoscale(original) : original()),
     upColor: state.colors.up, downColor: state.colors.down,
     wickUpColor: state.colors.up + "bf", wickDownColor: state.colors.down + "bf",
     borderVisible: false, priceLineColor: "#4f8ef7",
@@ -459,18 +459,19 @@ function smartZoom() {
 }
 
 /* échelle de prix incluant les niveaux GEX (bouton NIVEAUX) */
-function levelsAutoscale() {
+function levelsAutoscale(original) {
+  const base=original?.();
   const L = state.levels || {};
-  const vals = [L.call_wall, L.put_wall, L.zero_gex].filter((v) => v != null);
+  const vals = [L.call_wall, L.put_wall, L.zero_gex, state.selectedExposureStrike, base?.priceRange?.minValue, base?.priceRange?.maxValue].filter((v) => Number.isFinite(v) && v > 0);
   if (!vals.length) return null;
   const mn = Math.min(...vals), mx = Math.max(...vals);
   const pad = (mx - mn) * 0.10 || mx * 0.01;
-  return { priceRange: { minValue: mn - pad, maxValue: mx + pad } };
+  return { ...base, priceRange: { minValue: mn - pad, maxValue: mx + pad } };
 }
 $("fit-toggle").addEventListener("click", () => {
   state.fit = !state.fit;
   $("fit-toggle").classList.toggle("active", state.fit);
-  state.candles?.applyOptions({ autoscaleInfoProvider: (original) => (state.fit ? levelsAutoscale() : original()) });
+  state.candles?.applyOptions({ autoscaleInfoProvider: (original) => (state.fit ? levelsAutoscale(original) : original()) });
   queueGamma();
 });
 

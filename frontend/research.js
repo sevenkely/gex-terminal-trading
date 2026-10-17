@@ -23,6 +23,7 @@
     const id = ++seq, sym = state.symbol, filter = state.filter;
     const minimum = Math.min(1e9, Math.max(0, Number($("opt-minimum").value) || 0));
     const query = new URLSearchParams({minimum, kind:$("opt-kind").value, expiry:filter === "0dte" ? "0dte" : "all"});
+    const contract=$("opt-contract").value.trim();if(contract)query.set("contract",contract);
     try {
       const result = await Promise.all([
         fetch(`/api/option-flow/${sym}?${query}`),
@@ -36,10 +37,13 @@
       exported = {symbol:sym, filter, exported_at:new Date().toISOString(), tape, replay, oi, risk};
       $("opt-status").textContent = (tape.reason || `${tape.sample_count} transactions dans l'échantillon · ${tape.live ? "connexion active" : "flux non connecté"}`) + (tape.limitation ? " " + tape.limitation : "");
       const tbody = $("opt-rows"); tbody.replaceChildren();
-      for (const r of tape.rows || []) {
+      const rows=[...(tape.rows||[])];
+      rows.sort((a,b)=>$("opt-sort").value==="premium"?b.premium_usd-a.premium_usd:$("opt-sort").value==="amount"?b.amount-a.amount:b.ts-a.ts);
+      for (const r of rows) {
         const tr = document.createElement("tr");
-        const texts = [new Date(r.ts*1000).toISOString().slice(11,23), r.instrument, r.side, r.amount, Math.round(r.premium_usd).toLocaleString("fr-FR"), r.iv_pct == null ? "—" : `${r.iv_pct}%`];
+        const texts = [new Date(r.ts*1000).toISOString().slice(11,23), r.instrument, r.strike, r.option_type, new Date(r.expiry*1000).toISOString().slice(0,10),r.side,r.amount, Math.round(r.premium_usd).toLocaleString("fr-FR"),r.bid==null?"inconnu":`${r.bid} / ${r.ask}`,!r.trade_type||r.trade_type==="unknown"?"inconnu":r.trade_type,r.iv_pct==null?"—":`${r.iv_pct}%`];
         for (const text of texts) { const td = document.createElement("td"); td.textContent = text; tr.appendChild(td); }
+        const contractButton=document.createElement("button");contractButton.textContent=r.instrument;contractButton.className="hm-btn";tr.children[1].replaceChildren(contractButton);contractButton.addEventListener("click",()=>{$("opt-contract").value=r.instrument;load();});
         tr.title = `Source : ${r.source} ; direction : ${r.side_source} ; ouverture/fermeture : inconnue`;
         tbody.appendChild(tr);
       }
@@ -67,6 +71,9 @@
   }
   $("replay-range").addEventListener("input", renderReplay);
   $("research-refresh").addEventListener("click", load);
+  $("opt-contract").addEventListener("change",load);
+  $("opt-sort").addEventListener("change",load);
+  $("opt-clear").addEventListener("click",()=>{$("opt-contract").value="";load();});
   $("opt-kind").addEventListener("change", load);
   $("opt-minimum").addEventListener("change", load);
   document.querySelector('[data-p="research"]').addEventListener("click", load);

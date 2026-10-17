@@ -131,3 +131,15 @@ def test_rithmic_connects_market_data_only(monkeypatch):
     bridge=rithmic_bridge.RithmicBridge(Mock())
     asyncio.run(bridge._connect_flow())
     client.connect.assert_awaited_once_with(plants=[async_rithmic.SysInfraType.TICKER_PLANT])
+
+
+def test_source_trade_type_and_contract_isolation(monkeypatch):
+    monkeypatch.setenv('GEX_OPTION_FEED_SOURCE','licensed-test')
+    monkeypatch.setenv('GEX_OPTION_FEED_SYMBOLS','SPY')
+    tape=LicensedOptionTape()
+    a=observation(trade_type='sweep')
+    b=a.model_copy(update={'trade_id':'2','instrument':'other-contract','price_usd':100})
+    tape.ingest([a,b])
+    rows=tape.snapshot('SPY',limit=1,contract=a.instrument)['rows']
+    assert len(rows)==1 and rows[0]['instrument']==a.instrument and rows[0]['trade_type']=='sweep'
+    assert not tape.snapshot('SPY',contract='missing')['available']

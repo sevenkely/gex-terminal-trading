@@ -22,7 +22,7 @@ class OptionObservation(BaseModel):
     symbol: Literal['SPX','SPY','QQQ','GLD','ES','NQ','GC']
     instrument: str = Field(min_length=1)
     ts: float = Field(gt=0)
-    expiry: float = Field(gt=0)
+    expiry: float = Field(gt=0,le=7258118400)
     strike: float = Field(gt=0)
     option_type: Literal['C','P']
     amount: float = Field(gt=0,le=1e9)
@@ -37,6 +37,7 @@ class OptionObservation(BaseModel):
     exchange: str | None = None
     multi_leg_id: str | None = None
     position_effect: Literal['unknown','open','close']='unknown'
+    trade_type: Literal['unknown','block','sweep']='unknown'
     conditions: list[str] = Field(default_factory=list,max_length=20)
 
     @model_validator(mode='after')
@@ -100,12 +101,12 @@ class LicensedOptionTape:
                     entitlement_verified=False,
                     limitation='Operator must confirm license and vendor mapping. Configuration is not proof of a connected or entitled feed.')
 
-    def snapshot(self,symbol,minimum=0.,kind='all',expiry='all',limit=100):
+    def snapshot(self,symbol,minimum=0.,kind='all',expiry='all',limit=100,contract=None):
         now=time.time()
         tz=timezone.utc if symbol=='BTC' else __import__('zoneinfo').ZoneInfo('America/New_York')
         today=datetime.fromtimestamp(now,tz).date()
         with self.lock:
-            rows=[dict(r) for r in self.rows if r['symbol']==symbol and r['premium_usd']>=minimum
+            rows=[dict(r) for r in self.rows if r['symbol']==symbol and (contract is None or r['instrument']==contract) and r['premium_usd']>=minimum
                   and (kind=='all' or r['option_type']==kind)
                   and (expiry=='all' or (datetime.fromtimestamp(r['expiry'],tz).date()==today))]
         groups={}

@@ -9,7 +9,7 @@ Data:
   - Yahoo Finance                           -> candles + futures quotes
   - Deribit (public API, no key)            -> BTC : chaîne d'options, spot,
     candles et tape temps réel (perp + options) -> see deribit.py
-  - Live feed: SIM (default) or RITHMIC     -> see live_feed.py / README
+  - Live feed: DELAYED (default), SIM opt-in or RITHMIC     -> see live_feed.py / README
 
 Futures (ES/NQ/GC) display the GEX of their cash underlying (SPX/NDX/GLD)
 projected onto the futures scale via the live basis (additive) or ratio
@@ -22,6 +22,7 @@ import dataclasses
 import logging
 import os
 import time
+import math
 import threading
 from collections import deque
 from datetime import datetime, timezone
@@ -639,6 +640,26 @@ def _next_refresh(sym: str) -> float | None:
         chain = STATE["chains"].get(sym)
         return (chain.ts_epoch + CHAIN_REFRESH_CRYPTO) if chain else None
     return STATE.get("next_refresh")
+
+
+@app.get('/api/exposure/{symbol}')
+def api_exposure(symbol: str, filter: str = Query('all',pattern='^(all|0dte|weekly|monthly)$'),
+                 metric: str = Query('gamma',pattern='^(gamma|vanna)$'),
+                 band: float = Query(.05,ge=.01,le=.15,allow_inf_nan=False)):
+    from exposure import grid
+    sym=symbol.upper();chain=_chain_for(sym)
+    if chain is None: return dict(available=False,reason='Chaîne ou projection indisponible')
+    spot=_to_src(sym,engine.price(sym))
+    if not math.isfinite(spot) or spot<=0: return dict(available=False,reason='Prix de référence indisponible')
+    result=grid(chain,spot,filter,metric,band)
+    mapping=STATE['fmap'].get(sym)
+    if mapping:
+        result['model_spot']=result['spot']
+        result['unit']+=' (sous-jacent cash, projection non native futures)'
+        result['strikes']=[k+mapping['v'] if mapping['kind']=='basis' else k*mapping['v'] for k in result['strikes']]
+        result['spot']=engine.price(sym)
+    return {**result,'symbol':sym,'meta':chain_status(sym,filter),'price_mode':engine.mode_for(sym),
+            'source_symbol':FUTURES.get(sym,{}).get('src',sym)}
 
 
 @app.get("/api/gex/{symbol}")

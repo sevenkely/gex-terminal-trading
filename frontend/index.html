@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GEX Terminal — Gamma Exposure · Walls · Zero-GEX</title>
-<link rel="stylesheet" href="styles.css?v=3">
+<link rel="stylesheet" href="styles.css?v=4">
 <script src="vendor/lightweight-charts.js"></script>
 </head>
 <body>
@@ -49,6 +49,16 @@
   <div id="tape" aria-hidden="true"><div id="tape-inner" class="mono"></div></div>
 
   <!-- ======================= MAIN ======================= -->
+  <nav id="workspace-bar" aria-label="Espace d’analyse">
+    <strong>ESPACE D’ANALYSE</strong>
+    <label>Vue <select id="workspace-preset"><option value="analysis">Analyse</option><option value="focus">Focus graphique</option><option value="research">Recherche</option></select></label>
+    <label>GEX <select id="workspace-overlay"><option value="levels">Niveaux</option><option value="channels">Concentrations</option><option value="off">Masqué</option></select></label>
+    <label>Niveaux <select id="workspace-depth"><option value="3">3</option><option value="5" selected>5</option><option value="10">10</option><option value="15">15</option></select></label>
+    <label><input id="workspace-tape" type="checkbox" checked> Bandeau</label>
+    <button id="workspace-save" class="hm-btn">Enregistrer la vue</button>
+    <button id="workspace-reset" class="hm-btn">Réinitialiser</button>
+    <span id="workspace-status" role="status"></span>
+  </nav>
   <main>
     <section id="chart-col">
       <div id="chart-toolbar">
@@ -178,6 +188,7 @@
           <button id="draw-del" class="icon-btn" title="Supprimer le tracé sélectionné (Suppr)">✕</button>
         </div>
         <div id="hud" class="mono" hidden></div>
+        <canvas id="workspace-overlay-canvas" aria-hidden="true"></canvas>
         <div id="ohlc-legend" class="mono"></div>
         <div id="legend-lines" class="mono"></div>
 
@@ -242,6 +253,30 @@
     </section>
 
     <!-- ======================= SIDEBAR ======================= -->
+    <aside id="exposure-dock" aria-label="Analyse des expositions">
+      <div id="dock-resize" role="separator" aria-label="Largeur du panneau" aria-orientation="vertical" tabindex="0"></div>
+      <header><strong id="dock-symbol">EXPOSITIONS</strong><span class="muted">GEX estimé</span></header>
+      <nav id="dock-tabs" class="seg small" aria-label="Outils d’analyse">
+        <button data-view="grid" class="active">Échéances</button><button data-view="levels">Niveaux</button><button data-view="replay">Replay</button><button data-view="sources">Sources</button>
+      </nav>
+      <section id="dock-grid">
+        <div class="dock-controls"><label>Exposition <select id="exposure-metric"><option value="gamma">Gamma</option><option value="vanna">Vanna</option></select></label><label>Fenêtre <select id="exposure-band"><option value=".03">±3%</option><option value=".05" selected>±5%</option><option value=".10">±10%</option></select></label><button id="exposure-refresh" class="hm-btn">Actualiser</button></div>
+        <p id="exposure-status" role="status">Chargement…</p>
+        <div class="exposure-legend"><span>− Violet</span><span>Jaune : sélection / spot</span><span>+ Cyan</span></div>
+        <div id="exposure-table-wrap"><table id="exposure-table" class="mono"></table></div>
+        <div id="exposure-detail" role="status">Sélectionnez une cellule pour repérer son strike sur le graphique. Le filtre global reste inchangé.</div><button id="exposure-clear" class="hm-btn">Effacer la sélection</button>
+      </section>
+      <section id="dock-levels" hidden><h3>Concentrations par strike</h3><p class="muted">Somme des échéances visibles ; classement par exposition absolue. Pas de probabilité de rebond.</p><div id="exposure-levels"></div></section>
+      <section id="dock-replay" hidden>
+        <h3>Replay des observations</h3><p class="muted">Prix et niveaux enregistrés ensemble, sans recalcul avec la chaîne actuelle. Vue indépendante du graphique live ; pas de bougies reconstruites.</p>
+        <button id="dock-replay-load" class="hm-btn">Charger les observations</button>
+        <div class="dock-controls"><button id="dock-replay-prev" class="hm-btn" aria-label="Observation précédente">◀</button><button id="dock-replay-play" class="hm-btn">Lecture</button><button id="dock-replay-next" class="hm-btn" aria-label="Observation suivante">▶</button><label>Vitesse <select id="dock-replay-speed"><option value="1">1×</option><option value="4">4×</option><option value="16">16×</option><option value="60">60×</option></select></label></div>
+        <input id="dock-replay-range" type="range" min="0" max="0" value="0" disabled aria-label="Position du replay">
+        <canvas id="dock-replay-chart" height="230" aria-label="Prix et niveaux observés jusqu’au curseur"></canvas><div id="dock-replay-detail" role="status">Aucun historique chargé.</div>
+      </section>
+      <section id="dock-sources" hidden><h3>Sources et disponibilité</h3><p id="dock-source-status"></p><p>Sans identifiants : chaînes publiques différées et BTC public. Un accès market data est facultatif, sans plant d’ordres.</p><h3>Flow options actions / CME</h3><p>Ingestion normalisée disponible dans RECHERCHE. Nécessite un fournisseur et des droits adaptés ; aucun flux synthétique substitué.</p><h3>Dark pool</h3><p>Non connecté. Nécessite une source de transactions hors marché et ses conditions de reporting. Les transactions options et les volumes Yahoo ne sont pas du dark pool.</p><p>Une API tierce, dont Bullflow, devra être validée pour sa licence, son mapping, ses quotas et sa couverture avant activation. Aucun abonnement souscrit.</p></section>
+      <footer>Modèle calls + / puts − · les concentrations ne garantissent pas un support/résistance. Les concentrations affichées sont celles du snapshot actuel, pas un historique.</footer>
+    </aside>
     <aside id="sidebar">
       <button id="sb-collapse" title="Replier / déplier la sidebar">◀</button>
       <div id="sb-rail" aria-hidden="true"></div>
@@ -273,11 +308,11 @@
       <div class="sb-panel" id="sbp-research">
         <section class="research-card">
           <h2>Transactions options observées</h2>
-          <p class="muted">Deribit BTC uniquement. Actions/CME : aucun fournisseur de transactions options connecté.</p>
-          <div class="research-controls"><label>Type<select id="opt-kind"><option value="all">Calls + puts</option><option value="C">Calls</option><option value="P">Puts</option></select></label><label>Prime min. USD<input id="opt-minimum" type="number" min="0" max="1000000000" value="0" step="1000"></label><button id="research-refresh" class="btn">Actualiser</button></div>
+          <p class="muted">BTC : observations publiques Deribit. Actions/CME : observations d’une source autorisée si configurée ; aucun fournisseur connecté par défaut.</p>
+          <div class="research-controls"><label>Type<select id="opt-kind"><option value="all">Calls + puts</option><option value="C">Calls</option><option value="P">Puts</option></select></label><label>Prime min. USD<input id="opt-minimum" type="number" min="0" max="1000000000" value="0" step="1000"></label><label>Contrat<input id="opt-contract" maxlength="128" placeholder="Tous les contrats"></label><label>Tri<select id="opt-sort"><option value="time">Heure</option><option value="premium">Prime</option><option value="amount">Quantité</option></select></label><button id="opt-clear" class="btn">Effacer isolation</button><button id="research-refresh" class="btn">Actualiser</button></div>
           <p id="opt-status" class="muted" role="status"></p>
-          <div class="research-scroll"><table class="research-table"><thead><tr><th>Heure UTC</th><th>Contrat</th><th>Sens</th><th>Qté</th><th>Prime $</th><th>IV</th></tr></thead><tbody id="opt-rows"></tbody></table></div>
-          <p class="muted">Bid/ask et delta au trade, multi-leg, ouverture/fermeture : inconnus. Le sens ne constitue pas un signal directionnel.</p>
+          <div class="research-scroll"><table class="research-table"><thead><tr><th>Heure UTC</th><th>Contrat</th><th>Strike</th><th>C/P</th><th>Échéance UTC</th><th>Sens source</th><th>Qté</th><th>Prime $</th><th>Bid / Ask</th><th>Type source</th><th>IV</th></tr></thead><tbody id="opt-rows"></tbody></table></div>
+          <p class="muted">Cliquer un contrat pour isoler ses observations. Bid/ask, type block/sweep, multi-leg et ouverture/fermeture restent inconnus si non fournis. Le sens ne constitue pas un signal directionnel ; aucun score de réussite inventé.</p>
           <h3>Concentrations de l'échantillon</h3><div id="opt-concentrations" class="mono"></div>
         </section>
         <section class="research-card">
@@ -680,8 +715,9 @@
 
 <div id="access-overlay" hidden><form id="access-form"><h2>Accès au terminal</h2><p id="access-message" role="status"></p><label>Jeton de lecture<input id="access-token" type="password" autocomplete="off" required></label><button type="submit" class="btn">Ouvrir la session</button></form></div>
 <script src="access.js?v=1"></script>
-<script src="app.js?v=4"></script>
-<script src="research.js?v=2"></script>
+<script src="app.js?v=5"></script>
+<script src="research.js?v=3"></script>
 <script src="validation.js?v=1"></script>
+<script src="workspace.js?v=1"></script>
 </body>
 </html>

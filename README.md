@@ -627,3 +627,11 @@ heatmap GEX en mode session (`04_heatmap.png`), simulateur de scénario
 (`05_scenario.png`), pane GEX synchronisée (`06_gamma_pane.png`), timeframes &
 chips de niveaux (`07`, `08`), dessin sur chart (`09_dessin_midnight.png`),
 thèmes (`10_theme_daylight.png`, `11_theme_oled.png`).
+
+## Cockpit d’analyse
+
+Nouvelle vue Analyse : graphique + heatmap Gamma/Vanna par échéance, cellules
+liées au graphique, concentrations actuelles et vues enregistrables. Focus pour
+le graphique seul ; Recherche pour flow détaillé, historique et validation.
+Guide, API, unités et limites : [docs/WORKSPACE.md](docs/WORKSPACE.md).
+Aucune source payante ni donnée dark pool n'est activée par ce redesign.
