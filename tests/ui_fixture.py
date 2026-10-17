@@ -13,6 +13,9 @@ async def fixture_lifespan(app):
     yield
 
 server.app.router.lifespan_context = fixture_lifespan
+# Never read production flow checkpoints into synthetic UI fixtures.
+server.crypto_flow = server.flow_mod.OrderFlowEngine()
+server.bridge.flow = server.flow_mod.OrderFlowEngine()
 now=time.time()
 day=datetime.fromtimestamp(now, gex.ET).replace(hour=23,minute=59,second=0).timestamp()
 for sym in ('SPX','SPY','BTC'):

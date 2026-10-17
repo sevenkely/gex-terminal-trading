@@ -104,9 +104,15 @@ Les montants ne sont jamais additionnés entre ces deux types. Le survol détail
 achats, ventes, sens inconnu, delta des gros prints et côtés absorbés.
 
 - Agrégation côté serveur à la réception, pour tous les intervalles, conservée
-  en mémoire sur **420 bougies maximum par intervalle et contrat**. Les listes
-  courtes « dernières transactions » du panneau ne limitent plus cet historique.
-  La fenêtre repart après un redémarrage ; elle peut contenir des trous réseau.
+  en mémoire sur **420 bougies maximum par intervalle et contrat**, avec checkpoints
+  SQLite dans `data/flow.sqlite`. Les listes courtes « dernières transactions »
+  du panneau ne limitent plus cet historique. Les checkpoints sont restaurés au
+  démarrage : on ne repart plus systématiquement à zéro. Écriture toutes les 5 s
+  et à l’arrêt propre ; un arrêt brutal peut perdre les dernières secondes.
+  La conservation reste partielle et ne récupère pas le passé jamais collecté.
+  Jusqu’à 64 contrats par namespace (crypto / Rithmic), les plus récents sur disque.
+  Pour les futures, le contrat doit être résolu par le mapping Rithmic courant :
+  aucune substitution silencieuse d’une ancienne échéance après rollover.
 - Changer l'intervalle utilise les résumés de cet intervalle. L'heure peut être
   alignée à `:00` ou `:30` selon les vraies bougies du graphique ; le quotidien
   suit la date de séance CME pour ES/NQ/GC, UTC pour BTC. Les anciennes réponses
@@ -124,7 +130,7 @@ achats, ventes, sens inconnu, delta des gros prints et côtés absorbés.
 - BTC perp : notionnel USD ; BTC options : prime USD ; futures : contrats.
   Ces unités ne deviennent ni de l'OI ni un volume d'options cash.
 
-Dans **Flux · couleurs / lecture**, régler séparément acheteurs agressifs absorbés
+Dans **Affichage des flux** (barre supérieure), régler séparément acheteurs agressifs absorbés
 (bleu), vendeurs agressifs absorbés (jaune), mixte (violet) et opacité. Contour par
 défaut pour conserver la couleur hausse/baisse ; corps ou marqueur seul en option.
 Le bleu signifie que **l'achat agressif est absorbé par la vente passive**, pas un
@@ -132,15 +138,16 @@ signal acheteur. Le jaune signifie l'inverse. Les préférences sont locales au 
 
 Le **Zoom de lecture des montants** élargit les bougies autour de la zone observée ;
 **Vue d'ensemble** retrouve le cadrage initial. Sur une vue très dézoomée, les
-marqueurs et chiffres sont compactés à la largeur de leur bougie pour éviter les
-empilements ; zoomer ou survoler pour lire les montants complets. Les données ne
+marqueurs restent compacts mais les chiffres ne sont plus écrasés horizontalement :
+ils apparaissent lorsque l’espacement est suffisant. Zoomer, survoler ou sélectionner
+la bougie pour lire les montants dans l’inspecteur. Les données ne
 sont pas supprimées quand on dézoome.
 
 ## Niveaux et dessins
 
 Les libellés affichent **Call Wall / Put Wall / Zero Gamma** en toutes lettres,
-y compris les étiquettes du graphique. Les étiquettes d'axe peuvent s'étendre vers
-la gauche pour ne pas tronquer le nom du niveau. Ces niveaux calculés restent
+dans le panneau **Niveaux du marché**. La liste flottant auparavant sur le prix
+est retirée ; l’axe garde les prix principaux, pas la liste complète des noms. Ces niveaux calculés restent
 pilotés par les données et les interrupteurs de niveaux : ils ne sont pas des
 annotations déplaçables.
 
@@ -178,3 +185,56 @@ poignées, verrouillage, styles, annulation/rétablissement, persistance et mobi
 Pour les deux recettes navigateur : démarrer `tests/ui_fixture.py` sur 8010, puis
 `node tests/browser.cjs` et `node tests/flow_draw_browser.cjs` (Playwright et Chromium
 locaux dans `.cache/ui`). Ne pas remplacer le serveur réel par cette fixture.
+
+## Cockpit unifié : conservation, inspection et relecture
+
+- **Plan du cockpit** ouvre un schéma intégré de l’organisation. Le graphique,
+  le contexte GEX et l’inspecteur gardent leurs emplacements à travers les vues.
+- **Niveaux du marché** : principaux par défaut, secondaires en option, distance
+  au prix et indicateur hors écran. Cases par famille, pas modification des prix
+  calculés. Position à droite, à gauche ou flottante ; le bandeau du panneau
+  flottant est déplaçable et sa position locale mémorisée. L’ancien profil global
+  reste dans Classique ; la grille reste dans Analyse.
+- **Inspecteur** sous le prix : survol pour suivre, clic pour épingler, bouton pour
+  libérer. Une bougie sans agrégat reçu est inconnue, pas un zéro d’activité.
+  Les trois cartes séparent montant big, activité estimée et delta du tape complet.
+- **Diagnostic de couverture** : bougies reçues, associées aux OHLC, événementielles
+  visibles, absentes du graphique, dernière transaction, état SQLite et erreurs.
+  Les comptes ne constituent pas une attestation d’exhaustivité du fournisseur.
+- **Journal** : résumés par bougie de la source/intervalle sélectionnés, filtrage
+  par type, CSV, sélection liée au graphique et curseur de relecture des agrégats.
+  Ce n’est pas un journal de tous les prints individuels ni un carnet d’ordres.
+- **Alertes de franchissement** : source prix, contrat, filtre ALL du détecteur et
+  timestamp de chaîne mémorisés dans la notification. Les gardes existants contre
+  les prix SIM/STALE et les projections périmées restent actifs. Ce ne sont pas des
+  instructions de trading ni une validation de la fraîcheur de toute la chaîne.
+- **Objets du graphique** : sélection, affichage/masquage, verrouillage, duplication,
+  suppression ; modifications intégrées à undo/redo. Aucun niveau calculé dans
+  cette liste d’annotations.
+- **Relecture combinée indépendante** : prix du tape, flux et niveaux historiquement
+  enregistrés, intraday sur ES/NQ/GC directs ou BTC perp. Un agrégat complet n’est
+  dévoilé qu’à la clôture nominale de sa bougie. Les niveaux proviennent uniquement
+  d’un snapshot enregistré avant cette clôture, âgé de 90 s maximum, sans projection
+  périmée ; le contrat futures doit correspondre explicitement. Sinon : inconnus.
+  Aucun niveau actuel injecté dans le passé. Les proxies cash, options et quotidien
+  sont exclus de cette relecture combinée pour éviter des équivalences trompeuses.
+  Ce n’est ni du tick replay exhaustif ni une simulation d’ordres. La relecture
+  existante des snapshots GEX reste également disponible dans Analyse / Replay.
+
+Les options BTC sont présentées dans l’inspecteur comme **prime / index stable
+(heuristique)** : ce n’est pas une absorption observée sur le carnet d’un contrat.
+Le rendu sobre, les réglages en dialogue et le rail d’outils borné à la zone du
+prix évitent de recouvrir l’inspecteur et les chandeliers.
+
+Architecture ajoutée : `flow_store.py` (persistance bornée), `cockpit.js`
+(composition et inspection) et `observed-replay.js` (relecture indépendante).
+Le moteur existant n’est pas remplacé. Aucun abonnement ni accès ordres ajouté.
+Sauvegarder `flow.sqlite` séparément avec l’outil SQLite de sauvegarde cohérente
+si nécessaire ; ne pas copier à chaud un fichier de base en cours d’écriture.
+
+Validation : restauration de checkpoints, déduplication crypto par ID récent,
+retry d’erreur disque, arrivée pendant checkpoint, calibrage des contrats natifs,
+recette navigateur de positionnement, journal, objets et non-utilisation des niveaux
+futurs. Les fixtures isolent leurs moteurs des checkpoints de production.
+**Recette de marché réelle / séance entière : non effectuée ici**, connexion
+fournisseur toujours nécessaire. Les tests synthétiques ne valent pas ce sign-off.

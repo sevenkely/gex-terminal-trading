@@ -21,6 +21,9 @@ from __future__ import annotations
 import statistics
 import math
 import time
+import threading
+import logging
+import re
 from collections import deque
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -79,13 +82,16 @@ class SymbolFlow:
     def __init__(self, symbol: str, kind: str = "perp") -> None:
         self.symbol = symbol
         self.kind = kind
-        calib = calib_for(symbol, kind)
+        self.root = next((root for root in TICK_SIZES
+                          if symbol == root or re.fullmatch(re.escape(root) + r"[FGHJKMNQUVXZ]\d{1,2}", symbol)), symbol)
+        calib = calib_for(self.root, kind)
         self.tick = calib["tick"]
         self.min_big = calib["min_big"]
         self.k_big = calib["k_big"]
         self.absorb_min = calib["absorb_min"]
         self.absorb_k = calib["absorb_k"]
         self.unit = calib["unit"]
+        self.trade_ids = deque(maxlen=4096)
         self.sizes: deque[float] = deque(maxlen=MED_WINDOW)
         self.recent: deque[tuple[float, float, float, str | None]] = deque()
         self.big: deque[dict] = deque(maxlen=40)
@@ -135,7 +141,7 @@ class SymbolFlow:
             day = datetime.fromtimestamp(ts, timezone.utc).date().isoformat()
         else:
             dt = datetime.fromtimestamp(ts, ET)
-            day = (dt.date() + timedelta(days=1) if self.symbol in TICK_SIZES and dt.hour >= 18 else dt.date()).isoformat()
+            day = (dt.date() + timedelta(days=1) if self.root in TICK_SIZES and dt.hour >= 18 else dt.date()).isoformat()
         if day != self.day:
             self.reset_session(day)
 
@@ -299,25 +305,102 @@ class SymbolFlow:
 class OrderFlowEngine:
     """Un SymbolFlow par contrat Rithmic (exchange, contract)."""
 
-    def __init__(self) -> None:
+    def __init__(self, store=None) -> None:
+        self.store = store
+        self.lock = threading.RLock()
+        self.checkpoint_lock = threading.Lock()
+        self.persistence_error = None
+        self.last_checkpoint = None
+        self.restore_error = None
+        self.restored_contracts = 0
+        self._versions = {}
+        self._saved_versions = {}
         self.by_contract: dict[tuple, SymbolFlow] = {}
+        if store:
+            try:
+                for key, data in store.load():
+                    fl = SymbolFlow(data['symbol'], data['kind'])
+                    for name, value in data.items():
+                        if name not in ('symbol', 'kind', 'bars', 'cur_bar', 'sizes', 'recent', 'big', 'absorb', 'trade_ids'):
+                            if name in fl.__dict__: setattr(fl, name, value)
+                    for name in ('sizes','recent','big','absorb','trade_ids'):
+                        getattr(fl, name).extend(data.get(name, []))
+                    for name, bars in data['bars'].items():
+                        if name in fl.bars: fl.bars[name].extend(bars)
+                    fl.cur_bar = data['cur_bar']
+                    self.by_contract[tuple(key)] = fl
+                    self.restored_contracts += 1
+            except Exception as exc:
+                self.persistence_error = self.restore_error = type(exc).__name__
+                logging.getLogger(__name__).exception('Flow checkpoint restore failed')
+
+    def checkpoint(self):
+        with self.checkpoint_lock:
+            self._checkpoint()
+
+    def _checkpoint(self):
+        if not self.store: return
+        with self.lock:
+            rows = []
+            versions = dict(self._versions)
+            for key, fl in self.by_contract.items():
+                if versions.get(key) == self._saved_versions.get(key): continue
+                data = {k:v for k,v in fl.__dict__.items() if k not in ('bars','sizes','recent','big','absorb','trade_ids')}
+                data.update(bars={k:list(v)[-BAR_HISTORY:] for k,v in fl.bars.items()},
+                            **{k:list(getattr(fl,k)) for k in ('sizes','recent','big','absorb','trade_ids')})
+                # Freeze while holding the lock; SQLite must not block callbacks.
+                import json
+                rows.append((key, json.loads(json.dumps(data))))
+        if not rows: return
+        try:
+            self.store.save(rows)
+            with self.lock:
+                self._saved_versions.update(versions)
+            self.last_checkpoint = time.time()
+            self.persistence_error = None
+        except Exception as exc:
+            self.persistence_error = type(exc).__name__
+            logging.getLogger(__name__).exception('Flow checkpoint failed')
+
+    def diagnostics(self, key, interval='5m'):
+        with self.lock:
+            fl = self.by_contract.get(key)
+            bars = fl.bars_snapshot(interval,420) if fl else []
+            return dict(observed_bars=len(bars), big_bars=sum(b['big_n']>0 for b in bars),
+                        absorption_bars=sum(b['abs_n']>0 for b in bars),
+                        first_observed_ts=fl.coverage_start if fl else None,
+                        last_observed_ts=fl.last_ts if fl else None,
+                        persistence_enabled=bool(self.store), last_checkpoint=self.last_checkpoint,
+                        restored_contracts=self.restored_contracts, restore_error=self.restore_error,
+                        persistence_error=self.persistence_error,
+                        historical_coverage='partial', no_backfill=True)
+
 
     def add_trade(self, key: tuple, symbol: str, ts: float, price: float,
                   size: float, aggressor: int, kind: str = "perp",
-                  instrument: str | None = None) -> None:
-        fl = self.by_contract.get(key)
-        if fl is None:
-            fl = self.by_contract[key] = SymbolFlow(symbol, kind)
-        fl.add(ts, price, size, aggressor, instrument)
+                  instrument: str | None = None, trade_id=None) -> None:
+        with self.lock:
+            fl = self.by_contract.get(key)
+            if fl is None:
+                fl = self.by_contract[key] = SymbolFlow(symbol, kind)
+            if trade_id is not None and str(trade_id) in fl.trade_ids: return
+            if not all(math.isfinite(v) for v in (ts, price, size)) or price <= 0 or size <= 0: return
+            if fl.last_ts is not None and ts < fl.last_ts: return
+            fl.add(ts, price, size, aggressor, instrument)
+            if trade_id is not None: fl.trade_ids.append(str(trade_id))
+            self._versions[key] = self._versions.get(key, 0) + 1
 
     def get(self, key: tuple) -> dict | None:
-        fl = self.by_contract.get(key)
-        return fl.snapshot() if fl else None
+        with self.lock:
+            fl = self.by_contract.get(key)
+            return fl.snapshot() if fl else None
 
     def bars(self, key: tuple, interval: str = "5m", limit: int = 240) -> list[dict]:
         """Delta/CVD par bougie pour un contrat (vide s'il n'a rien reçu)."""
-        fl = self.by_contract.get(key)
-        return fl.bars_snapshot(interval, limit) if fl else []
+        with self.lock:
+            fl = self.by_contract.get(key)
+            return fl.bars_snapshot(interval, limit) if fl else []
 
     def clear(self) -> None:
-        self.by_contract.clear()
+        with self.lock:
+            self.by_contract.clear()

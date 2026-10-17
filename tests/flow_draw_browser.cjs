@@ -43,8 +43,8 @@ let launchedBrowser;
      counts:[...new Set(state.flowHits.map(h=>h.cell.t))].map(t=>state.flowHits.filter(h=>h.cell.t===t).length)};
  });
  assert.equal(markers.cells,60);assert.equal(markers.hits,120);assert(markers.counts.every(n=>n===2));
- assert.equal(markers.labels.filter(t=>t.startsWith('A ')).length,60);
- assert(markers.labels.some(t=>t.startsWith('A ')&&t.includes('×2')));
+ assert.equal(markers.labels.filter(t=>t.startsWith('A ')).length,0); // dense overview uses markers, not compressed text
+
  // Historical candle still exists after zooming away from the recent tape.
  await page.evaluate(()=>state.chart.timeScale().setVisibleLogicalRange({from:0,to:15}));
  assert((await page.evaluate(()=>flowClusters().cells.length))>=15);
@@ -63,12 +63,28 @@ let launchedBrowser;
  });
  assert.equal(styles.border.color,styles.up);assert.notEqual(styles.border.borderColor,styles.up);
  assert.notEqual(styles.body.color,styles.up);assert.equal(styles.marker.borderColor,styles.up);
- await page.locator('#abs-settings summary').click();
+ await page.locator('#cockpit-flow-settings').click();
  await page.locator('#abs-buy').evaluate(el=>{el.value='#00aaff';el.dispatchEvent(new Event('input'));});
  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('gex.absorption')).buy),'#00aaff');
- await page.locator('#abs-settings summary').click();
+ await page.locator('#flow-settings-dialog .dialog-close').click();
  // Stale source/interval rows cannot leak to the new chart.
  assert.equal(await page.evaluate(()=>{const old=state.flowBarsContext;state.flowBarsContext='OTHER|1m|options';const n=flowClusters().cells.length;state.flowBarsContext=old;return n;}),0);
+ // The levels list is outside price; preferences are in a dialog, not floating over candles.
+ assert.equal(await page.locator('#legend-lines').isVisible(),false);
+ assert(await page.locator('#context-levels').isVisible());
+ await page.selectOption('#levels-position','left');
+ assert.equal(await page.evaluate(()=>$('context-rail').parentElement.tagName),'MAIN');
+ await page.selectOption('#levels-position','float');assert(await page.locator('#context-rail').evaluate(el=>el.classList.contains('floating')));
+ await page.selectOption('#levels-position','right');
+ await page.evaluate(()=>window.dispatchEvent(new Event('flow-data')));
+ assert.match(await page.locator('#flow-coverage').innerText(),/60 bougies reçues/);
+ await page.evaluate(()=>{$('flow-journal').open=true;});
+ assert.equal(await page.locator('#journal-rows tr').count(),60);
+ await page.locator('#journal-rows button').first().click();
+ assert.match(await page.locator('#inspect-time').innerText(),/épinglée/);
+ assert.match(await page.locator('#flow-metrics').innerText(),/épisodes/);
+ await page.locator('#inspect-unpin').click();
+ await page.evaluate(()=>{$('flow-journal').open=false;state.chart.timeScale().setVisibleLogicalRange({from:-2,to:62});});
  // Draw using real pointer events, then translate horizontally AND vertically.
  const rect=await page.locator('#draw-canvas').boundingBox();
  await page.locator('#draw-bar [data-tool="rect"]').click();
@@ -115,11 +131,30 @@ let launchedBrowser;
  await page.evaluate(()=>{state.interval='15m';});
  assert.equal(await page.evaluate(()=>JSON.stringify(draw.shapes)),persisted);
  await page.evaluate(()=>{state.interval='5m';draw.sel=-1;drawOptsSync();setDrawTool('none');queueDraw();queueFlow();});
- assert.match(await page.locator('#legend-lines').innerText(),/Call Wall/);
- await page.locator('#abs-settings summary').click();await page.locator('#flow-read').click();
+ assert.match(await page.locator('#context-levels').innerText(),/Call Wall/);
+ await page.locator('#cockpit-flow-settings').click();await page.locator('#flow-read').click();
  await page.screenshot({path:'.cache/ui/flow-draw-desktop.png'});
+ // Combined replay must not use the second candle's future model levels.
+ await page.evaluate(()=>{state.symbol='BTC';state.flowBarsContext=flowContext();$('closed-flow-replay').open=true;});
+ const replayBase=await page.evaluate(()=>state.flowBars[0].t);
+ await page.route('**/api/replay/BTC?*',route=>route.fulfill({json:{rows:[
+   {recorded_at:replayBase+299,chain_ts:replayBase,price_mode:'DERIBIT',levels:{call_wall:6100,put_wall:5900,zero_gex:6000}},
+   {recorded_at:replayBase+599,chain_ts:replayBase,price_mode:'DERIBIT',levels:{call_wall:99999999,put_wall:5900,zero_gex:6000}}
+ ]}}));
+ await page.locator('#closed-replay-load').click();
+ await page.waitForFunction(()=>$('closed-replay-status').textContent.includes('1/60'));
+ assert.match(await page.locator('#closed-replay-status').innerText(),/Call Wall 6100/);
+ assert(!(await page.locator('#closed-replay-status').innerText()).includes('99999999'));
+ await page.locator('#closed-replay-next').click();
+ assert.match(await page.locator('#closed-replay-status').innerText(),/Call Wall 99999999/);
+ await page.evaluate(()=>{state.symbol='SPX';state.flowBarsContext=flowContext();$('closed-flow-replay').open=false;$('drawing-manager').open=true;});
+ await page.waitForFunction(()=>$('drawing-objects').querySelectorAll('button').length>0);
+ await page.locator('#drawing-objects button').filter({hasText:'Masquer'}).first().click();
+ assert.equal(await page.evaluate(()=>draw.shapes[0].hidden),true);
+ await page.evaluate(()=>{drawUndo();$('drawing-manager').open=false;});
+ assert.equal(await page.evaluate(()=>!!draw.shapes[0].hidden),false);
  await page.setViewportSize({width:390,height:844});
- await page.locator('#abs-settings summary').click();
+ await page.locator('#cockpit-flow-settings').click();
  assert(await page.locator('#abs-buy').isVisible());
  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
  await page.screenshot({path:'.cache/ui/flow-draw-mobile.png'});

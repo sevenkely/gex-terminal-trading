@@ -113,3 +113,70 @@ def test_hourly_cash_half_hour_alignment_does_not_lose_or_mix_events():
     assert len(utc) == 1 and utc[0]["big_total"] == 30
     assert [(b["t"], b["big_total"]) for b in cash] == [(BASE - 1800, 20), (BASE + 1800, 10)]
     assert all(b["interval_s"] == 3600 for b in cash)
+
+
+def test_checkpoint_restores_all_intervals_and_deduplicates_seed(tmp_path):
+    from flow_store import FlowStore
+    store = FlowStore(tmp_path / 'flow.db', 'test')
+    engine = OrderFlowEngine(store)
+    key = ('DERIBIT', 'BTC-PERPETUAL')
+    for i in range(80):
+        for j in range(20):
+            engine.add_trade(key,'BTC-PERPETUAL',BASE+i*60+j,100000,1,1,trade_id=f'{i}-small-{j}')
+        for j in range(3):
+            engine.add_trade(key,'BTC-PERPETUAL',BASE+i*60+20+j,100000,20000,1,trade_id=f'{i}-big-{j}')
+    before = engine.bars(key,'1m',420)
+    assert sum(b['big_n'] for b in before)==240
+    assert sum(b['abs_n'] for b in before)==80
+    engine.checkpoint()
+    restored = OrderFlowEngine(store)
+    assert restored.bars(key,'1m',420) == before
+    restored.add_trade(key,'BTC-PERPETUAL',BASE+79*60+22,100000,20000,1,trade_id='79-big-2')
+    assert restored.bars(key,'1m',420) == before
+    assert restored.diagnostics(key,'1m')['observed_bars']==80
+    assert OrderFlowEngine(FlowStore(tmp_path/'flow.db','other')).bars(key)==[]
+
+
+def test_checkpoint_failure_is_reported_and_retry_preserves_data(tmp_path):
+    from flow_store import FlowStore
+    class FailingStore(FlowStore):
+        fail = True
+        def save(self, rows):
+            if self.fail: raise OSError('synthetic disk failure')
+            super().save(rows)
+    store = FailingStore(tmp_path/'flow.db','test')
+    engine = OrderFlowEngine(store)
+    engine.add_trade(('X','ES'), 'ES', BASE, 6000, 10, 1)
+    engine.checkpoint()
+    assert engine.diagnostics(('X','ES'))['persistence_error']=='OSError'
+    store.fail = False
+    engine.checkpoint()
+    assert engine.diagnostics(('X','ES'))['persistence_error'] is None
+    assert len(OrderFlowEngine(store).bars(('X','ES')))==1
+
+
+def test_trade_arriving_during_checkpoint_is_saved_on_next_flush(tmp_path):
+    from flow_store import FlowStore
+    key = ('X','ES')
+    class ConcurrentStore(FlowStore):
+        callback = None
+        def save(self, rows):
+            if self.callback:
+                callback,self.callback = self.callback,None
+                callback()
+            super().save(rows)
+    store = ConcurrentStore(tmp_path/'flow.db','test')
+    engine = OrderFlowEngine(store)
+    engine.add_trade(key,'ES',BASE,6000,10,1)
+    store.callback = lambda: engine.add_trade(key,'ES',BASE+60,6000,10,1)
+    engine.checkpoint()
+    engine.checkpoint()
+    assert len(OrderFlowEngine(store).bars(key,'1m'))==2
+
+
+def test_native_contract_uses_root_tick_and_cme_session():
+    f = SymbolFlow('GCZ6')
+    assert f.tick == .1 and f.root == 'GC'
+    f.add(datetime(2026,10,15,23,tzinfo=timezone.utc).timestamp(),4000,10,1)
+    assert f.day == '2026-10-16'
+    assert f.bars_snapshot('1d')[0]['t'] == BASE//86400*86400

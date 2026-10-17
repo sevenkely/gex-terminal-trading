@@ -90,7 +90,8 @@ STATE: dict = {"chains": {}, "fmap": {}, "tick_count": {}, "zero_cache": {},
                "alert_seq": 0, "alert_sides": {}, "alert_levels": {}, "alert_cooldown": {}}
 engine = PriceEngine()
 bridge = RithmicBridge(engine)
-crypto_flow = flow_mod.OrderFlowEngine()   # tape BTC (perp + options Deribit)
+from flow_store import FlowStore
+crypto_flow = flow_mod.OrderFlowEngine(FlowStore(os.path.join(os.path.dirname(__file__), "..", "data", "flow.sqlite"), "crypto"))   # tape BTC (perp + options Deribit)
 option_tape = OptionTape()
 licensed_option_tape = LicensedOptionTape()
 research_store = ResearchStore(os.getenv("GEX_RESEARCH_DB") or os.path.join(os.path.dirname(FRONTEND), "data", "research.sqlite3"))
@@ -193,11 +194,11 @@ def _crypto_trade(kind: str, ts: float, price: float, amount: float,
             return
         crypto_flow.add_trade(("DERIBIT", "BTC-OPTIONS"), "BTC-OPTIONS", ts,
                               idx, premium, agg, kind="options",
-                              instrument=instrument)
+                              instrument=instrument, trade_id=trade_id)
     else:
         crypto_flow.add_trade(("DERIBIT", deribit.PERP), deribit.PERP, ts,
                               price, amount, agg, kind="perp",
-                              instrument=instrument)
+                              instrument=instrument, trade_id=trade_id)
 
 
 def seed_crypto_flow(count: int = 100) -> None:
@@ -408,6 +409,10 @@ async def alert_loop():
                         "seq": STATE["alert_seq"], "ts": now, "level": key,
                         "label": label, "level_price": round(lvl, 2),
                         "price": round(price, 2), "direction": direction,
+                        "symbol": sym, "filter": "all", "price_mode": engine.mode_for(sym),
+                        "contract": (bridge.flow_key(sym) or (None, None))[1],
+                        "chain_ts": _chain_for(sym).ts_epoch,
+                        "projection_fresh": projection.get("fresh") if projection else None,
                         "text": f"{sym} franchit {label} {direction} — niveau "
                                 f"{lvl:,.2f} · prix {price:,.2f}",
                     })
@@ -451,11 +456,13 @@ async def lifespan(app: FastAPI):
     crypto_feed.on_trade = _crypto_trade
     tasks = [asyncio.create_task(coro) for coro in (
         initial_load(), engine.run_sim(), refresh_loop(), crypto_refresh_loop(),
-        alert_loop(), research_loop(), record_loop(), heartbeat_loop(), rollover_loop(), crypto_feed.run())]
+        alert_loop(), research_loop(), record_loop(), flow_checkpoint_loop(), heartbeat_loop(), rollover_loop(), crypto_feed.run())]
     yield
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.to_thread(crypto_flow.checkpoint)
+    await asyncio.to_thread(bridge.flow.checkpoint)
     if bridge.client:
         await bridge.disconnect("Arrêt du serveur")
     for _ in range(10):
@@ -960,7 +967,7 @@ def api_flow_bars(symbol: str, interval: str = Query("5m", pattern="^(30s|1m|5m|
 
     Même source que `/api/flow/{sym}` : tape Deribit pour BTC (`src=perp` ou
     `options`), tape Rithmic pour les futures. Ne remonte que ce qui a été vu
-    depuis le démarrage du serveur — pas de backfill historique.
+    depuis les observations reçues/restaurées localement — pas de backfill synthétique.
     """
     sym = symbol.upper()
     if sym not in SYMBOLS:
@@ -978,7 +985,11 @@ def api_flow_bars(symbol: str, interval: str = Query("5m", pattern="^(30s|1m|5m|
         bars = bridge.get_flow_bars(sym, bucket, limit)
         snap = bridge.get_flow(sym) or {}
         unit = snap.get("unit", "contrats")
+    key = ("DERIBIT", contract) if sym in CRYPTO_SYMBOLS else bridge.flow_key(sym)
+    flow_engine = crypto_flow if sym in CRYPTO_SYMBOLS else bridge.flow
     return {
+        "diagnostics": flow_engine.diagnostics(key, bucket),
+        "contract": key[1] if key else None, "exchange": key[0] if key else None,
         "available": bool(bars),
         "symbol": sym, "interval": interval, "offset_s": offset, "unit": unit,
         "bars": bars,
@@ -986,13 +997,20 @@ def api_flow_bars(symbol: str, interval: str = Query("5m", pattern="^(30s|1m|5m|
         "first_observed_ts": snap.get("coverage_start"),
         "retained_from": bars[0]["t"] if bars else None,
         "last_observed_ts": snap.get("last_ts"),
-        "coverage": "Observed since process start, bounded to 420 bars per contract/interval; "
+        "coverage": "Observed tape with local checkpoints, bounded to 420 bars per contract/interval; "
                     "no synthetic backfill. Absorption totals belong to the detection candle; "
                     "same-side windows are disjoint.",
         "reason": None if bars else
                   ("Le tape se remplit depuis le démarrage du serveur : "
                    "aucune bougie pour l'instant."),
     }
+
+
+async def flow_checkpoint_loop():
+    while True:
+        await asyncio.sleep(5)
+        await asyncio.to_thread(crypto_flow.checkpoint)
+        await asyncio.to_thread(bridge.flow.checkpoint)
 
 
 async def record_loop():

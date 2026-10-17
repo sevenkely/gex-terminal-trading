@@ -135,7 +135,7 @@ function initChart() {
   });
   // axe volume masqué : la bande delta/CVD occupe le bas du chart (voir drawDeltaBand)
   chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.755, bottom: 0.175 }, visible: false });
-  chart.priceScale("right").applyOptions({ minimumWidth: 122 });
+  chart.priceScale("right").applyOptions({ minimumWidth: 122, scaleMargins:{top:.16,bottom:.30} });
   chart.timeScale().subscribeVisibleLogicalRangeChange(() => { queueGamma(); queueDraw(); queueFlow(); });
   chart.priceScale("right").subscribeVisibleValueRangeChange?.(() => { queueGamma(); queueFlow(); });
 
@@ -203,15 +203,15 @@ function drawLevels(L, profile) {
     const c = W.call[i], p = W.put[i];
     if (T.cw && c) setLine("cw" + i, c.strike, {
       color: i ? hexA(WALL_C, 0.28 + 0.62 * Math.abs(c.gex) / maxC) : WALL_C,
-      lineWidth: i ? 1 : 2, lineStyle: S, axisLabelVisible: false, title: "",
+      lineWidth: i ? 1 : 2, lineStyle: S, axisLabelVisible: i===0, title: "",
     }); else setLine("cw" + i, null);
     if (T.pw && p) setLine("pw" + i, p.strike, {
       color: i ? hexA(WALL_P, 0.28 + 0.62 * Math.abs(p.gex) / maxP) : WALL_P,
-      lineWidth: i ? 1 : 2, lineStyle: S, axisLabelVisible: false, title: "",
+      lineWidth: i ? 1 : 2, lineStyle: S, axisLabelVisible: i===0, title: "",
     }); else setLine("pw" + i, null);
   }
   const flip = L.gamma_flip ?? L.zero_gex;
-  if (T.flip && flip != null) setLine("flip", flip, { color: FLIP_C, lineWidth: 1, lineStyle: S, axisLabelVisible: false, title: "" });
+  if (T.flip && flip != null) setLine("flip", flip, { color: FLIP_C, lineWidth: 1, lineStyle: S, axisLabelVisible: true, title: "" });
   else setLine("flip", null);
   if (T.pain && L.max_pain != null) setLine("pain", L.max_pain, { color: hexA(PAIN_C, .7), lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
   else setLine("pain", null);
@@ -1101,9 +1101,9 @@ function flowRender() {
       ctx.fill();
       ctx.globalAlpha = 1;
       ctx.fillStyle = "#081018";
-      ctx.fillText(amount(cu.size), cu.x, cu.y - 3, Math.max(4, r * 2 - 2));
+      if(spacing>=48)ctx.fillText(amount(cu.size), cu.x, cu.y - 3, Math.max(4, r * 2 - 2));
       ctx.font = "8px monospace";
-      ctx.fillText("×" + cu.n, cu.x, cu.y + 8, r * 2);
+      if(spacing>=48)ctx.fillText("×" + cu.n, cu.x, cu.y + 8, r * 2);
       ctx.font = "700 9px monospace";
       state.flowHits.push({ x: cu.x, y: cu.y, r, cell: cu });
     }
@@ -1116,7 +1116,7 @@ function flowRender() {
       ctx.strokeStyle = cu.absColor || absorptionStyle.mixed;
       ctx.strokeRect(cu.x - width / 2, cu.absY - 9, width, 18);
       ctx.fillStyle = cu.absColor || absorptionStyle.mixed;
-      ctx.fillText(label, cu.x, cu.absY, Math.max(4, width - 4));
+      if(spacing>=70)ctx.fillText(label, cu.x, cu.absY, Math.max(4, width - 4));
       state.flowHits.push({ x: cu.x, y: cu.absY, r: 12, w: width, cell: cu });
     }
   }
@@ -1184,12 +1184,13 @@ async function loadFlowBars() {
     if(!r.ok)throw new Error("flow history unavailable");
     const j = await r.json();
     if (seq !== flowBarsSeq || sym!==state.symbol || iv!==state.interval || source!==flowSrc || offset!==flowBarOffset()) return;
-    state.flowBars = j.bars || [];
+    state.flowError=null;state.flowBars = j.bars || [];
     state.flowBarsContext=flowContext();
-    state.flowCoverageStart=j.retained_from;
+    state.flowCoverageStart=j.retained_from;state.flowDiagnostics=j.diagnostics||null;state.flowContract=j.contract||null;
+    window.dispatchEvent(new Event("flow-data"));
     state.flowBarsUnit = j.unit || "contrats";
     recolorFlowCandles();queueFlow();
-  } catch { /* tape indisponible : la bande reste vide */ }
+  } catch { if(sym===state.symbol&&iv===state.interval&&source===flowSrc)state.flowError="Chargement indisponible"; }
 }
 function startFlowBarsPoll() { stopFlowBarsPoll(); loadFlowBars(); flowBarsPoll = setInterval(loadFlowBars, 2500); }
 function stopFlowBarsPoll() { if (flowBarsPoll) { clearInterval(flowBarsPoll); flowBarsPoll = null; } }
@@ -1318,6 +1319,7 @@ function addAlertRow(a, fresh) {
   row.className = "alert-row " + a.level + (fresh ? " fresh" : "");
   const t = new Date(a.ts * 1000).toLocaleTimeString("fr-FR", { hour12: false });
   row.innerHTML = `<span class="t">${t}</span><span class="m">${a.text}</span>`;
+  if(a.price_mode){const context=document.createElement("small");context.textContent=`${a.price_mode} · filtre ${(a.filter||"all").toUpperCase()}${a.contract?" · "+a.contract:""}${a.chain_ts?" · chaîne "+new Date(a.chain_ts*1000).toISOString():""}`;row.querySelector(".m").append(context);}
   list.prepend(row);
   while (list.children.length > 30) list.lastChild.remove();
   if (fresh) setTimeout(() => row.classList.remove("fresh"), 2500);
@@ -2196,6 +2198,7 @@ function drawGamma() {
   if (T.flip && flip != null) mark(flip, FLIP_C, "d");
   if (T.pain && L.max_pain != null) mark(L.max_pain, PAIN_C, "s");
 
+  if(!window.cockpitManagedLevels){
   // 5) chips d'axe : « CW1 82,000 | $22.4M » posées sur le strike, empilées sans
   //    chevauchement si elles se marchent dessus (le trait de rappel garde le
   //    prix exact quand la chip a été poussée).
@@ -2264,6 +2267,7 @@ function drawGamma() {
   if (T.pw && Ws.put[0]) chip(Ws.put[0].strike, WALL_P, "Put Wall 1");
   if (T.flip && flip != null) chip(flip, FLIP_C, "Zero Gamma");
 
+  }
   // pulses d'alerte (anneaux expansifs)
   if (state.pulses && state.pulses.length) {
     const now = Date.now();
@@ -3322,6 +3326,7 @@ function drawXY(pt) {
 function shapePts(sh) { return (sh.pts || []).map(drawXY).filter(Boolean); }
 function hitShape(x, y) {
   for (let i = draw.shapes.length - 1; i >= 0; i--) {
+    if(draw.shapes[i].hidden)continue;
     const ps = shapePts(draw.shapes[i]);
     if (!ps.length) continue;
     const tol = 7;
@@ -3343,7 +3348,7 @@ function hitShape(x, y) {
   return -1;
 }
 function hitHandle(x, y) {
-  if (draw.sel < 0 || draw.shapes[draw.sel].locked) return -1;
+  if (draw.sel < 0 || draw.shapes[draw.sel].locked || draw.shapes[draw.sel].hidden) return -1;
   const ps = shapePts(draw.shapes[draw.sel]);
   for (let k = 0; k < ps.length; k++) if (Math.hypot(ps[k].x - x, ps[k].y - y) < 8) return k;
   return -1;
@@ -3461,8 +3466,10 @@ function drawRender() {
   const ctx = cv.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
   ctx.font = "700 9.5px 'JetBrains Mono', monospace";
+  ctx.save();ctx.beginPath();ctx.rect(0,28,W-(state.chart.priceScale("right").width()||122),H*.73-28);ctx.clip();
   const all = draw.draft ? [...draw.shapes, draw.draft] : draw.shapes;
   all.forEach((sh, i) => {
+    if(sh.hidden)return;
     const ps = shapePts(sh);
     if (!ps.length) return;
     const col = sh.color || "#22d3ee", lw = sh.width || 2;
@@ -3512,6 +3519,7 @@ function drawRender() {
     }
     ctx.globalAlpha = 1;
   });
+  ctx.restore();
 }
 
 window.state = state;   // debug/introspection

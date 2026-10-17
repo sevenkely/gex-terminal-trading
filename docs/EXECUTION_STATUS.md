@@ -13,7 +13,7 @@ Un test synthétique réussi ne devient jamais une validation de données live.
 
 ## Preuves disponibles dans le dépôt
 
-Dernier passage : **62 tests pytest réussis**, tests `crypto_feed` hors ligne
+Dernier passage : **66 tests pytest réussis**, tests `crypto_feed` hors ligne
 réussis et contrôles de syntaxe JavaScript réussis. Un avertissement de
 dépréciation Starlette/httpx (TestClient) subsiste, sans échec.
 
@@ -86,3 +86,14 @@ Vérifié hors ligne : 7 tests dédiés flow/API et recette navigateur dédiée,
 la recette complète du cockpit (desktop/tablette/mobile). Les tests utilisent
 des événements contrôlés : ils ne prouvent ni un historique fournisseur exhaustif,
 ni une détection certaine d'absorption, ni une validation live d'une séance entière.
+
+### Cockpit unifié et flux conservés
+
+Checkpoints SQLite bornés avec restauration et diagnostic, panneau de niveaux
+repositionnable hors du prix, inspecteur/journal liés aux bougies, gestionnaire
+d’annotations et relecture indépendante de bougies closes avec niveaux connus.
+66 tests pytest, plus les recettes navigateur cockpit et flux/dessins hors ligne.
+L’interface expose les données manquantes au lieu de les assimiler à zéro.
+La cause exacte sur l’installation utilisateur et le sign-off de marché restent
+à confronter à son flux réel : aucun backfill fournisseur ni couverture exhaustive
+n’est promis. Les observations antérieures à la conservation ne sont pas recréées.

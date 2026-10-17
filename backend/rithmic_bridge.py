@@ -20,6 +20,7 @@ import os
 import time
 from security import validate_gateway
 from storage import write_json
+from flow_store import FlowStore
 
 import flow as flow_mod
 
@@ -96,7 +97,7 @@ class RithmicBridge:
         self._anchors: dict[str, float] = {}      # tab -> offset
         self.books: dict[tuple, dict] = {}        # (exchange, contract) -> order book
         self._book_batches: dict[tuple, dict] = {}
-        self.flow = flow_mod.OrderFlowEngine()    # gros trades / absorption / delta
+        self.flow = flow_mod.OrderFlowEngine(FlowStore(os.path.join(DATA_DIR, "flow.sqlite"), "rithmic"))    # gros trades / absorption / delta
         self._bbo: dict[tuple, tuple] = {}        # (exchange, contract) -> (bid, ask, ts)
 
     # ------------------------------------------------------------ order book

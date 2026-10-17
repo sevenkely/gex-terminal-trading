@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GEX Terminal — Gamma Exposure · Walls · Zero-GEX</title>
-<link rel="stylesheet" href="styles.css?v=4">
+<link rel="stylesheet" href="styles.css?v=6">
 <script src="vendor/lightweight-charts.js"></script>
 </head>
 <body>
@@ -57,6 +57,7 @@
     <label><input id="workspace-tape" type="checkbox" checked> Bandeau</label>
     <button id="workspace-save" class="hm-btn">Enregistrer la vue</button>
     <button id="workspace-reset" class="hm-btn">Réinitialiser</button>
+    <button id="cockpit-flow-settings" class="hm-btn">Affichage des flux</button><button id="cockpit-layout" class="hm-btn">Plan du cockpit</button>
     <span id="workspace-status" role="status"></span>
   </nav>
   <main>
@@ -728,9 +729,11 @@
 
 <div id="access-overlay" hidden><form id="access-form"><h2>Accès au terminal</h2><p id="access-message" role="status"></p><label>Jeton de lecture<input id="access-token" type="password" autocomplete="off" required></label><button type="submit" class="btn">Ouvrir la session</button></form></div>
 <script src="access.js?v=1"></script>
-<script src="app.js?v=5"></script>
+<script src="app.js?v=7"></script>
 <script src="research.js?v=3"></script>
 <script src="validation.js?v=1"></script>
 <script src="workspace.js?v=2"></script>
+<script src="cockpit.js?v=1"></script>
+<script src="observed-replay.js?v=1"></script>
 </body>
 </html>
