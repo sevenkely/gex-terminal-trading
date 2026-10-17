@@ -1,0 +1,10 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+numpy>=1.26
+async-rithmic>=1.6
+aiohttp>=3.9          # crypto_feed : options Deribit + flux Binance/Bybit
+websockets>=12        # crypto_feed : aggTrade / publicTrade / carnet L2
+protobuf>=4
+# Build seulement (régénération des bindings du kit) : pip install grpcio-tools
+websockets>=13

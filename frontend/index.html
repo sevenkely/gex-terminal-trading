@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEX Terminal — Gamma Exposure · Walls · Zero-GEX</title>
+<link rel="stylesheet" href="styles.css?v=2">
+<script src="vendor/lightweight-charts.js"></script>
+</head>
+<body>
+<div id="app">
+
+  <!-- ======================= TOP BAR ======================= -->
+  <header id="topbar">
+    <div class="brand">
+      <div class="logo">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M3 17l5-6 4 4 6-8 3 4" stroke="url(#lg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <defs><linearGradient id="lg" x1="3" y1="7" x2="21" y2="17" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#2dd4a7"/><stop offset="1" stop-color="#2dd4a7"/>
+          </linearGradient></defs>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <span>GEX&nbsp;Terminal</span>
+        <small>gamma exposure · walls · zero-gex</small>
+      </div>
+    </div>
+
+    <nav id="tabs" aria-label="Instruments"></nav>
+
+    <div class="top-right">
+      <div id="market-status" class="chip" title="Statut de session (heure de New York)">
+        <span class="dot"></span>
+        <span id="ms-label">—</span>
+        <span id="et-clock" class="mono"></span>
+      </div>
+      <div id="mode-chip" class="chip sim" title="Source des ticks temps réel">
+        <span class="dot"></span><span id="mode-label">SIM</span>
+      </div>
+      <button id="settings-btn" class="icon-btn" title="Connexion Rithmic — paramètres" aria-label="Paramètres">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+  <div id="tape" aria-hidden="true"><div id="tape-inner" class="mono"></div></div>
+
+  <!-- ======================= MAIN ======================= -->
+  <main>
+    <section id="chart-col">
+      <div id="chart-toolbar">
+        <div class="hero" id="hero">
+          <canvas id="hero-spark"></canvas>
+          <span id="hero-symbol" class="mono">SPX</span>
+          <span id="live-price" class="mono">—</span>
+          <span id="live-change" class="chg-pill mono">—</span>
+          <span id="hero-regime" class="mono" hidden>—</span>
+          <span id="hero-sub" class="muted mono"></span>
+        </div>
+        <div class="toolbar-right">
+          <div class="seg small" id="preset-seg">
+            <button data-p="scalp">SCALP</button>
+            <button data-p="swing">SWING</button>
+            <button data-p="macro">MACRO</button>
+          </div>
+          <button id="zen-toggle" class="hm-btn" title="Mode zen : chart plein écran">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
+            ZEN
+          </button>
+          <button id="gp-toggle" class="hm-btn active" title="Pane GEX : zones gamma, histogramme par strike, cône ±1σ">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18"/><path d="M3 5h13M3 9h7M3 13h16M3 17h5M3 21h10"/></svg>
+            GAMMA
+          </button>
+          <button id="fit-toggle" class="hm-btn" title="Inclure call/put walls et zero-GEX dans l'échelle de prix">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8V3h5M21 8V3h-5M3 16v5h5M21 16v5h-5"/><path d="M7 12h10"/></svg>
+            NIVEAUX
+          </button>
+          <button id="scen-toggle" class="hm-btn" title="Simulateur de scénarios spot / IV">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/></svg>
+            SCÉNARIO
+          </button>
+          <button id="hm-toggle" class="hm-btn" title="Heatmap GEX — session & historique">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            HEATMAP
+          </button>
+          <button id="ladder-toggle" class="hm-btn active" title="Strike ladder façon depth-of-market">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/><circle cx="8" cy="6" r="1.6" fill="currentColor"/><circle cx="15" cy="12" r="1.6" fill="currentColor"/><circle cx="10" cy="18" r="1.6" fill="currentColor"/></svg>
+            LADDER
+          </button>
+          <div id="intervals" class="seg">
+              <button data-iv="1m">1m</button>
+              <button data-iv="5m">5m</button>
+              <button data-iv="15m">15m</button>
+              <button data-iv="30m">30m</button>
+              <button data-iv="1h">1H</button>
+              <button data-iv="1d" class="active">1D</button>
+            </div>
+        </div>
+      </div>
+
+      <div id="chart-wrap">
+      <div id="chart-area">
+        <div id="chart"></div>
+        <canvas id="gex-overlay"></canvas>
+        <canvas id="flow-canvas"></canvas>
+        <canvas id="delta-canvas"></canvas>
+        <div id="delta-legend" class="mono"></div>
+        <div id="flow-tip" class="mono" hidden></div>
+        <div id="flow-legend" class="mono"></div>
+        <canvas id="draw-canvas" class="idle"></canvas>
+        <div id="draw-bar">
+          <button data-tool="none" class="active" title="Chart libre (zoom / pan)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>
+          </button>
+          <button data-tool="cursor" title="Sélectionner / déplacer un tracé">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4l7 17 2.5-7.5L21 11z"/></svg>
+          </button>
+          <div class="sep"></div>
+          <button data-tool="trend" title="Trendline (2 points)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19L20 5"/><circle cx="4" cy="19" r="2"/><circle cx="20" cy="5" r="2"/></svg>
+          </button>
+          <button data-tool="ray" title="Ray (origine + direction)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="19" r="2"/><path d="M7 17L21 4M17 4h4v4"/></svg>
+          </button>
+          <button data-tool="hline" title="Ligne horizontale (1 clic)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18"/><circle cx="12" cy="12" r="2"/></svg>
+          </button>
+          <button data-tool="vline" title="Ligne verticale (1 clic)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18"/><circle cx="12" cy="12" r="2"/></svg>
+          </button>
+          <button data-tool="rect" title="Rectangle / zone (2 coins)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="6" width="16" height="12" rx="1"/></svg>
+          </button>
+          <button data-tool="fib" title="Retracement Fibonacci">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18M3 10h18M3 14h18M3 17h18M3 21h18"/></svg>
+          </button>
+          <div class="sep"></div>
+          <button id="draw-bubbles" title="Bulles gros trades / absorptions sur le prix">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="14" r="5"/><circle cx="17" cy="8" r="3"/></svg>
+          </button>
+          <div class="sep"></div>
+          <button id="draw-undo" title="Annuler le dernier tracé (Ctrl+Z)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>
+          </button>
+          <button id="draw-clear" title="Effacer tous les tracés">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+          </button>
+        </div>
+        <div id="draw-opts" hidden>
+          <input type="color" id="draw-color" value="#22d3ee" title="Couleur du tracé">
+          <select id="draw-width" title="Épaisseur">
+            <option value="1">1 px</option><option value="2" selected>2 px</option><option value="3">3 px</option>
+          </select>
+          <label class="draw-op" title="Opacité">
+            <span>OPA</span>
+            <input type="range" id="draw-opacity" min="10" max="100" step="5" value="100">
+            <b id="draw-opacity-val">100%</b>
+          </label>
+          <button id="draw-dup" class="icon-btn" title="Dupliquer le tracé (Ctrl+D)">⧉</button>
+          <button id="draw-del" class="icon-btn" title="Supprimer le tracé sélectionné (Suppr)">✕</button>
+        </div>
+        <div id="hud" class="mono" hidden></div>
+        <div id="ohlc-legend" class="mono"></div>
+        <div id="legend-lines" class="mono"></div>
+
+        <div id="heatmap-panel" hidden>
+          <div class="hm-head">
+            <span class="hm-title mono">GEX HEATMAP</span>
+            <div class="seg small" id="hm-mode">
+              <button data-m="session" class="active">SESSION</button>
+              <button data-m="hist">HIST</button>
+            </div>
+            <div class="seg small" id="hm-iv">
+              <button data-i="5m" class="active">5m</button>
+              <button data-i="15m">15m</button>
+              <button data-i="1h">1H</button>
+            </div>
+            <div class="seg small" id="hm-range">
+              <button data-r="0.03">±3%</button>
+              <button data-r="0.05" class="active">±5%</button>
+              <button data-r="0.08">±8%</button>
+            </div>
+            <div class="hm-legend mono"><span class="red">−</span><div class="hm-grad"></div><span class="green">+</span></div>
+            <button id="hm-close" class="icon-btn" aria-label="Fermer le heatmap">✕</button>
+          </div>
+          <div id="hm-body">
+            <canvas id="hm-canvas"></canvas>
+            <div id="hm-tip" class="mono" hidden></div>
+            <div id="hm-empty" class="muted" hidden></div>
+          </div>
+          <div id="hm-foot" class="muted mono"></div>
+        </div>
+        <div id="scen-panel" hidden>
+          <div class="sc-head">
+            <span class="sc-title mono">SIMULATEUR DE SCÉNARIO</span>
+            <span style="display:flex;gap:6px;align-items:center">
+              <button id="sc-reset" class="sc-reset mono">réinit.</button>
+              <button id="sc-close" class="icon-btn" aria-label="Fermer le simulateur">✕</button>
+            </span>
+          </div>
+          <div class="sc-row">
+            <label>CHOC SPOT <b id="sc-spot-v" class="mono">+0.00 %</b></label>
+            <input id="sc-spot" type="range" min="-5" max="5" step="0.25" value="0">
+          </div>
+          <div class="sc-row">
+            <label>CHOC IV <b id="sc-iv-v" class="mono">+0.0 pt</b></label>
+            <input id="sc-iv" type="range" min="-10" max="10" step="0.5" value="0">
+          </div>
+          <div class="sc-grid mono" id="sc-out"></div>
+          <div class="sc-foot muted">Re-pricing Black-Scholes de la chaîne du jour au spot / IV hypothétiques — open interest inchangé. Lignes orange = niveaux du scénario sur le chart.</div>
+        </div>
+      </div>
+      <canvas id="gex-strip"></canvas>
+      </div>
+      
+
+      <div id="statusbar" class="mono">
+        <span class="sb-chip"><span class="sb-dot"></span><span id="sb-sources">CBOE delayed 15-min · Yahoo Finance · ticks SIM</span></span>
+        <span class="sb-chip"><span id="sb-chain">—</span></span>
+        <span class="sb-chip"><span id="sb-ticks">—</span></span>
+        <span class="sb-chip">Ctrl+K : commandes</span>
+      </div>
+    </section>
+
+    <!-- ======================= SIDEBAR ======================= -->
+    <aside id="sidebar">
+      <button id="sb-collapse" title="Replier / déplier la sidebar">◀</button>
+      <div id="sb-rail" aria-hidden="true"></div>
+      <div id="sb-tabs">
+        <button data-p="gex" class="active">GEX</button>
+        <button data-p="alerts">ALERTES</button>
+        <button data-p="flow">FLUX</button>
+        <button data-p="fut">FUTURES</button>
+        <button data-p="deriv" id="tab-deriv" hidden>DÉRIVÉS</button>
+      </div>
+      <div class="sb-panel active" id="sbp-gex">
+      <div class="card" id="zonemap-card">
+        <div class="card-head">
+          <h2>Zone Map</h2>
+          <div class="head-badges">
+            <span id="proxy-badge" class="badge proxy" hidden></span>
+            <span id="regime-badge" class="badge">—</span>
+          </div>
+        </div>
+
+        <div id="zonemap" aria-hidden="true">
+          <div class="zm-struct"><span id="zm-struct-p" class="mono"></span><span id="zm-struct-c" class="mono"></span></div>
+          <div class="zm-track">
+            <div id="zm-em" class="zm-em"></div>
+            <div id="zm-zero" class="zm-zero"><span>FLIP</span></div>
+            <div id="zm-pain" class="zm-wall pain"><span class="flag">PAIN</span></div>
+            <div id="zm-pw" class="zm-wall pw"><span class="flag">PW1</span></div>
+            <div id="zm-cw" class="zm-wall cw"><span class="flag">CW1</span></div>
+            <div id="zm-spot" class="zm-spot"><span class="dia"></span></div>
+          </div>
+          <div class="zm-labels">
+            <span id="zm-pw-label" class="red mono"></span>
+            <span id="zm-spot-label" class="mono"></span>
+            <span id="zm-cw-label" class="green mono"></span>
+            <span id="zm-struct-c" class="muted mono"></span>
+          </div>
+        </div>
+
+        <div id="lvl-controls">
+          <div class="seg small" id="win-seg">
+            <button data-w="1">±1%</button><button data-w="2">±2%</button>
+            <button data-w="3" class="active">±3%</button>
+            <button data-w="5">±5%</button><button data-w="8">±8%</button>
+          </div>
+          <div id="lvl-toggles">
+            <button data-t="cw" class="ltgl active" style="--c:#2dd4a7">CW</button>
+            <button data-t="pw" class="ltgl active" style="--c:#f0616d">PW</button>
+            <button data-t="flip" class="ltgl active" style="--c:#f5c542">FLIP</button>
+            <button data-t="pain" class="ltgl" style="--c:#e8ecf4">PAIN</button>
+            <button data-t="hist" class="ltgl active" style="--c:#8b93a7">HIST γ</button>
+            <button data-t="band" class="ltgl active" style="--c:#8b93a7">BANDES</button>
+            <button data-t="vwap" class="ltgl active" style="--c:#e8ecf4">VWAP</button>
+            <button data-t="prof" class="ltgl active" style="--c:#8b93a7">PROFILE</button>
+            <button data-t="heat" class="ltgl active" style="--c:#8b93a7">HEAT γ</button>
+          </div>
+        </div>
+
+        <div id="tiles">
+          <div class="tile wide" id="tile-netgex">
+            <div class="tile-label">NET GEX · mouvement de 1 %</div>
+            <div class="tile-value" id="lv-netgex">—</div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">GAMMA FLIP</div>
+            <div class="tile-value yellow" id="lv-zerogex">—</div>
+            <div class="tile-sub" id="lv-zerogex-note"></div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">EXPECTED MOVE 1σ</div>
+            <div class="tile-value blue" id="lv-em">—</div>
+            <div class="tile-sub" id="lv-em-note"></div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">MAX PAIN</div>
+            <div class="tile-value white" id="lv-maxpain">—</div>
+            <div class="tile-sub" id="lv-maxpain-note"></div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">PIN SCORE · séance</div>
+            <div class="tile-value yellow" id="lv-pin">—</div>
+            <div class="tile-sub" id="lv-pin-note">prob. de pinning gamma</div>
+            <div class="gauge" id="pin-gauge" style="--sc:0"></div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">CALL WALL · #1</div>
+            <div class="tile-value green" id="lv-callwall">—</div>
+            <div class="tile-sub" id="lv-callwall-gex"></div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">PUT WALL · #1</div>
+            <div class="tile-value red" id="lv-putwall">—</div>
+            <div class="tile-sub" id="lv-putwall-gex"></div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">PIC γ CALL</div>
+            <div class="tile-value" id="lv-gpcall">—</div>
+            <div class="tile-sub" id="lv-gpcall-gex"></div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">PIC γ PUT</div>
+            <div class="tile-value" id="lv-gpput">—</div>
+            <div class="tile-sub" id="lv-gpput-gex"></div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">IV30</div>
+            <div class="tile-value" id="lv-iv30">—</div>
+            <div class="tile-sub">volatilité implicite 30 j</div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">OPEN INTEREST</div>
+            <div class="tile-value" id="lv-oi">—</div>
+            <div class="tile-sub" id="lv-oi-note">contrats</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="ladder-card">
+        <div class="card-head">
+          <h2>Strike ladder</h2>
+          <span class="head-badges"><span class="badge" id="ladder-badge">OI · Γ</span></span>
+        </div>
+        <div id="ladder" hidden></div>
+      </div>
+
+      <div class="card grow" id="profile-card">
+        <div class="card-head">
+          <h2>Profil GEX par strike</h2>
+          <div id="filters" class="seg small">
+            <button data-f="all" class="active">ALL</button>
+            <button data-f="0dte">0DTE</button>
+            <button data-f="weekly">≤7D</button>
+            <button data-f="monthly">≤35D</button>
+          </div>
+        </div>
+        <div id="profile-head-row" class="prow head muted mono"><span>STRIKE</span><span>GEX NET ($ / 1 %)</span></div>
+        <div id="profile"></div>
+        <div id="profile-hint" class="muted">Cliquez un strike pour l'épingler sur le chart · survolez pour le détail OI</div>
+      </div>
+
+      </div>
+      <div class="sb-panel" id="sbp-alerts">
+      <div class="card" id="alerts-card">
+        <div class="card-head">
+          <h2>Alertes de franchissement</h2>
+          <span style="display:flex;gap:6px;align-items:center">
+            <button id="sound-toggle" class="ltgl" style="--c:#f5c542" title="Bip sonore sur franchissement">SON</button>
+            <span id="alerts-count" class="badge">0</span>
+          </span>
+        </div>
+        <div id="alerts-list"><div class="alerts-empty muted">Aucun franchissement pour l'instant — les passages de zero-GEX / call wall / put wall apparaîtront ici en direct.</div></div>
+      </div>
+
+      <div class="card" id="rules-card">
+        <div class="card-head">
+          <h2>Règles personnelles</h2>
+          <span class="head-badges"><span class="badge" id="rules-count">0</span></span>
+        </div>
+        <div id="rule-form">
+          <select id="rule-kind" class="mono">
+            <option value="cross">Franchit</option>
+            <option value="near">Approche ≤</option>
+            <option value="regime">Régime γ devient</option>
+          </select>
+          <select id="rule-level" class="mono">
+            <option value="cw1">CW1</option>
+            <option value="pw1">PW1</option>
+            <option value="flip">FLIP</option>
+            <option value="pain">MAX PAIN</option>
+            <option value="vwap">VWAP</option>
+            <option value="price">Prix fixe</option>
+          </select>
+          <input id="rule-x" class="mono" type="text" inputmode="decimal" placeholder="bps / prix" title="Seuil en bps (approche) ou prix fixe">
+          <select id="rule-regime" class="mono" hidden>
+            <option value="long_gamma">LONG γ</option>
+            <option value="short_gamma">SHORT γ</option>
+          </select>
+          <button id="rule-add" class="sc-reset mono" title="Ajouter la règle">+ AJOUTER</button>
+        </div>
+        <div id="rules-list"><div class="alerts-empty muted">Aucune règle — ex. « franchit FLIP », « approche ≤ 20 bps de CW1 », « régime γ devient SHORT ».</div></div>
+        <div id="rules-log"><div class="alerts-empty muted">Déclenchements de vos règles — horodatés, avec le prix au moment du signal.</div></div>
+      </div>
+
+      <div class="card" id="react-card">
+        <div class="card-head">
+          <h2>Réaction des niveaux</h2>
+          <span class="head-badges"><span class="badge proxy" id="react-note">—</span></span>
+        </div>
+        <div id="react-table"></div>
+        <div class="muted" id="react-foot">Touche = mèche qui traverse le niveau (historique affiché, une par passage). Tenue = clôture 5 bougies plus tard du même côté qu'à la touche · MV = amplitude moyenne du mouvement en bps.</div>
+      </div>
+
+      </div>
+      <div class="sb-panel" id="sbp-flow">
+      <div class="card" id="flow-card">
+        <div class="card-head">
+          <h2 id="flow-title">Flux d'ordres · tape Rithmic</h2>
+          <span class="head-badges">
+            <span class="badge proxy" id="flow-contract" hidden>—</span>
+            <span class="badge off" id="flow-state">—</span>
+          </span>
+        </div>
+        <div class="fsrc-seg" id="flow-src" hidden>
+          <button data-src="perp" class="active">PERP · NOTIONNEL</button>
+          <button data-src="options">OPTIONS · PRIME</button>
+        </div>
+        <div id="flow-stats">
+          <div class="tile wide">
+            <div class="tile-label" id="fl-lab-delta">DELTA AGRESSIF · SÉANCE</div>
+            <div class="tile-value" id="fl-delta">—</div>
+            <div class="tile-sub" id="fl-delta-sub"></div>
+          </div>
+          <div class="tile">
+            <div class="tile-label" id="fl-lab-vol">VOLUME</div>
+            <div class="tile-value" id="fl-vol">—</div>
+            <div class="tile-sub" id="fl-trades"></div>
+          </div>
+          <div class="tile">
+            <div class="tile-label" id="fl-lab-thr">SEUIL GROS TRADE</div>
+            <div class="tile-value" id="fl-thr">—</div>
+            <div class="tile-sub" id="fl-med"></div>
+          </div>
+        </div>
+        <div class="fl-head mono"><span>GROS TRADES</span><span id="fl-big-n"></span></div>
+        <div id="fl-big" class="fl-list"></div>
+        <div class="fl-head mono"><span>ABSORPTION</span><span id="fl-abs-n"></span></div>
+        <div id="fl-absorb" class="fl-list"></div>
+        <div id="fl-note" class="muted"></div>
+      </div>
+
+      </div>
+
+      <div class="sb-panel" id="sbp-deriv">
+      <div class="card" id="deriv-card">
+        <div class="card-head">
+          <h2>Dérivés · skew & terme</h2>
+          <span class="head-badges"><span class="badge proxy" id="deriv-src">DERIBIT</span></span>
+        </div>
+        <div class="dg-hero">
+          <div class="dg-big"><span class="dg-lab">SKEW 25Δ · FRONT</span><span class="dg-val" id="dv-skew">—</span><span class="dg-sub" id="dv-skew-note"></span></div>
+          <div class="dg-side">
+            <div class="dg-kv"><span>IV ATM</span><b id="dv-atm">—</b></div>
+            <div class="dg-kv"><span>P/C OI</span><b id="dv-pc">—</b></div>
+            <div class="dg-kv"><span>SPOT</span><b id="dv-spot">—</b></div>
+          </div>
+        </div>
+        <div class="dg-head mono"><span>STRUCTURE PAR TERME · IV ATM</span><span id="dv-term-note"></span></div>
+        <canvas id="dterm-canvas"></canvas>
+        <div id="dterm-rows"></div>
+        <div class="muted" id="deriv-foot">Skew 25Δ = IV put 25Δ − IV call 25Δ (points de vol) · delta Black-Scholes r = 0 · max pain = strike qui minimise le payout OI.</div>
+      </div>
+      </div>
+
+      <div class="sb-panel" id="sbp-fut">
+        <div class="muted" id="fut-none" style="padding:14px;font-size:11px;line-height:1.6">Onglet réservé aux onglets futures (ES / NQ / GC) : basis historisé et carnet d'ordres L2 Rithmic.</div>
+      <div class="card" id="basis-card" hidden>
+        <div class="card-head">
+          <h2 id="basis-title">Basis</h2>
+          <span class="badge proxy" id="basis-kind">—</span>
+        </div>
+        <div id="basis-hero"><span id="basis-value" class="mono">—</span><span id="basis-delta" class="mono muted"></span></div>
+        <div id="basis-spark"></div>
+        <div id="basis-foot" class="muted mono"></div>
+      </div>
+
+      <div class="card" id="dom-card" hidden>
+        <div class="card-head">
+          <h2>Carnet d'ordres <span id="dom-contract" class="mono muted"></span></h2>
+          <span class="badge" id="dom-badge">—</span>
+        </div>
+        <div id="dom-ladder"></div>
+        <div id="dom-placeholder" class="muted">
+          Le carnet L2 s'affiche ici quand un compte <b>Rithmic</b> est connecté
+          (engrenage ⚙ en haut à droite) — profondeur CME requise sur l'abonnement market data.
+        </div>
+      </div>
+
+      </div>
+    </aside>
+  </main>
+</div>
+
+<!-- ======================= MODALE RITHMIC ======================= -->
+<div id="modal-overlay" hidden>
+  <div id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-head">
+      <div>
+        <h2 id="modal-title">Connexion Rithmic</h2>
+        <small class="muted">Prix temps réel des futures — optionnel, le dashboard fonctionne en SIM sans compte</small>
+      </div>
+      <button id="modal-close" class="icon-btn" aria-label="Fermer">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div id="rith-status" class="rstatus disconnected">
+        <span class="dot"></span>
+        <div class="rs-text">
+          <b id="rs-state">Déconnecté</b>
+          <span id="rs-msg" class="muted">Aucun compte configuré</span>
+        </div>
+        <span id="rs-contracts" class="mono muted"></span>
+      </div>
+
+      <div class="form-section">
+        <h3>Identifiants</h3>
+        <div class="form-grid">
+          <label class="span2">Préréglage
+            <select id="rt-preset"><option value="">— personnalisé —</option></select>
+          </label>
+          <label>Utilisateur (app ID)<input id="rt-user" autocomplete="username" spellcheck="false"></label>
+          <label>Mot de passe<input id="rt-pass" type="password" autocomplete="current-password" placeholder="laisser vide = inchangé"></label>
+          <label>System name<input id="rt-system" spellcheck="false"></label>
+          <label>Gateway URL<input id="rt-url" spellcheck="false" placeholder="ex. rituz00100.rithmic.com:443"></label>
+          <div class="ap-row" style="align-items:center;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn" id="rt-discover">Découvrir systèmes &amp; gateways</button>
+            <span class="muted" style="font-size:9.5px">R|Protocol templates 16 + 20 — aucun identifiant requis</span>
+          </div>
+          <div id="rt-discover-out" class="muted mono" style="font-size:9.5px;line-height:1.6;max-height:150px;overflow:auto" hidden></div>
+          <label>App name<input id="rt-appname" spellcheck="false"></label>
+          <label>App version<input id="rt-appver" spellcheck="false"></label>
+          <label class="checkbox span2"><input type="checkbox" id="rt-auto"> Activer la connexion Rithmic (auto au démarrage du serveur)</label>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3>Abonnements par onglet</h3>
+        <table id="rt-mappings">
+          <thead><tr><th>Onglet</th><th>Exchange</th><th>Contrat <small>(vide = front month auto)</small></th><th>Mode</th><th class="stat-col">Dernier tick</th></tr></thead>
+          <tbody></tbody>
+        </table>
+
+        <h3>Apparence</h3>
+        <div class="themes-seg" id="theme-seg">
+          <button data-th="midnight" class="active">MIDNIGHT</button>
+          <button data-th="daylight">DAYLIGHT</button>
+          <button data-th="oled">OLED</button>
+          <button data-th="phosphor">PHOSPHOR</button>
+        </div>
+        <div style="height:10px"></div>
+        <div class="ap-presets" id="candle-presets">
+          <button data-up="#2dd4a7" data-down="#f0616d"><span class="ap-sw" style="background:#2dd4a7"></span><span class="ap-sw" style="background:#f0616d"></span>Classique</button>
+          <button data-up="#4f8ef7" data-down="#f7a34f"><span class="ap-sw" style="background:#4f8ef7"></span><span class="ap-sw" style="background:#f7a34f"></span>Dultonien</button>
+          <button data-up="#22d3ee" data-down="#f472b6"><span class="ap-sw" style="background:#22d3ee"></span><span class="ap-sw" style="background:#f472b6"></span>Cyber</button>
+          <button data-up="#e2e8f2" data-down="#5b6879"><span class="ap-sw" style="background:#e2e8f2"></span><span class="ap-sw" style="background:#5b6879"></span>Mono</button>
+        </div>
+        <div class="ap-row"><label>BOUGIES HAUSSE</label><input type="color" id="ap-up" value="#2dd4a7"></div>
+        <div class="ap-row"><label>BOUGIES BAISSE</label><input type="color" id="ap-down" value="#f0616d"></div>
+        <div class="ap-row"><label style="flex:none;font-size:9px">Appliquées aussi aux mèches, au volume, aux sparklines et au heatmap.</label></div>
+        <p class="muted note">
+          <b>direct</b> : prix du contrat futures brut · <b>anchor</b> : les variations Rithmic pilotent l'onglet cash sans saut de basis.
+          Les identifiants sont stockés localement dans <span class="mono">data/rithmic_config.json</span> (en clair — privilégiez un compte paper/trading).
+          Les gateways de production peuvent exiger le test de <i>conformance</i> Rithmic ; utilisez d'abord « Rithmic Test » ou le gateway fourni par votre broker.
+          <b>Système servi</b> : le gateway public <span class="mono">rituz00100.rithmic.com:443</span> ne sert que
+          « Rithmic Test » ; « Rithmic Paper Trading » n'existe que sur les gateways
+          <span class="mono">rprotocol-ie / -de / -sg</span>. Utilisez « Découvrir systèmes &amp; gateways »
+          (templates 16 + 20, sans identifiant) pour lire la liste exacte avant de saisir un
+          <span class="mono">system_name</span>. La conformance authentifie mais ne relaie pas les flux CME :
+          les onglets restent en SIM, et un contrat explicite (ex. ESM6) évite l'échec de résolution
+          du front-month.
+        </p>
+      </div>
+    </div>
+
+    <div class="modal-foot">
+      <span id="rt-hint" class="muted mono"></span>
+      <div class="modal-actions">
+        <button id="rt-disconnect" class="btn danger">Déconnecter</button>
+        <button id="rt-save" class="btn">Enregistrer</button>
+        <button id="rt-connect" class="btn primary">Enregistrer &amp; Connecter</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+<div id="error-banner" hidden></div>
+<div id="cmdk" hidden>
+  <div id="cmdk-box">
+    <input id="cmdk-input" placeholder="Commande ou symbole… (Échap pour fermer)" autocomplete="off">
+    <div id="cmdk-list"></div>
+  </div>
+</div>
+<div id="tour" hidden>
+  <div id="tour-hole"></div>
+  <div id="tour-card">
+    <h4 id="tour-title"></h4>
+    <p id="tour-text"></p>
+    <div id="tour-nav">
+      <span id="tour-step" class="mono"></span>
+      <span style="display:flex;gap:8px">
+        <button id="tour-skip" class="sc-reset mono">Passer</button>
+        <button id="tour-next" class="hm-btn">Suivant →</button>
+      </span>
+    </div>
+  </div>
+</div>
+
+<script src="app.js?v=2"></script>
+</body>
+</html>

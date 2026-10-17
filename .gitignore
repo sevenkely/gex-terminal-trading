@@ -1,0 +1,24 @@
+# Identifiants locaux (RITHMIC_USER / RITHMIC_PASS / …)
+.env
+
+# Config remplie depuis l'interface : contient le mot de passe Rithmic en clair
+data/rithmic_config.json
+
+# Données de marché en cache, journaux et artefacts
+data/
+*.log
+
+# .proto extraits du dev kit (régénérables : voir README « Bindings protobuf »)
+backend/rithmic_pb_src/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Divers
+.DS_Store
+
+# Dossier dupliqué accidentellement créé (copies des rendus, non versionné)
+gex-dashboard/
