@@ -1116,3 +1116,58 @@ dialog p { color:var(--muted);line-height:1.65;font-size:13px; }
 .cockpit #draw-bar button{flex:0 0 30px;}
 
 .cockpit .alert-row .m small{display:block;color:var(--muted);font:10px/1.5 var(--mono);margin-top:5px;}
+/* Final chart-first composition: essential information stays visible, deep tools are opt-in. */
+#price-controls{display:flex;align-items:center;gap:6px;font:11px var(--mono);}
+#price-controls button,#price-controls select{background:var(--panel2);color:var(--text);border:1px solid var(--border);padding:6px 9px;border-radius:4px;cursor:pointer;}
+#essential-context{padding:18px;border-bottom:1px solid var(--border);}
+#essential-context header{font:11px var(--mono);letter-spacing:.06em;margin-bottom:16px;}
+#essential-context header>span{display:block;color:var(--muted);font-size:10px;margin-top:5px;}
+.essential-stat{padding:12px 0;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:7px;}
+.essential-stat>span{color:var(--muted);font-size:11px;}.essential-stat>b{font:17px var(--mono);}
+#essential-context p{font:11px/1.7 var(--sans);color:var(--muted);margin-top:16px;}
+#essential-source{padding-top:12px;}#essential-source>div{display:flex;flex-direction:column;gap:4px;margin:10px 0;}#essential-source span{font-size:10px;color:var(--muted);}#essential-source b{font:11px/1.6 var(--mono);}
+body:not(.essential) #essential-context{display:none;}
+body.essential #sidebar>:not(#context-rail):not(#essential-context){display:none!important;}
+body.essential #sidebar{flex-basis:292px;min-width:0;background:var(--bg2);}
+body.essential #exposure-dock{width:340px;min-width:300px;}
+body.essential #workspace-bar{padding:7px 12px;gap:8px;}
+body.essential #workspace-bar>strong,body.essential #workspace-save,body.essential #workspace-reset,body.essential #cockpit-layout{display:none;}
+body.essential #preset-seg,body.essential #gp-toggle,body.essential #ladder-toggle,body.essential #scen-toggle,body.essential #hm-toggle,body.essential #gex-strip{display:none!important;}
+body.essential #hero-sub,body.essential #hero-spark{display:none;}
+body.essential #chart-toolbar{padding:10px 14px;gap:10px;}
+body.essential #hero{min-height:34px;gap:10px;flex:0 1 auto;}
+body.essential #live-price{font-size:25px;}
+body.essential #hero-regime{font-size:9px;}
+body.essential #chart-toolbar .toolbar-right{margin-left:auto;gap:8px;flex-wrap:wrap;}
+body.essential #data-toolbar{padding:6px 12px;gap:8px;}
+body.essential #methodology{font-size:10px;}
+body.essential #data-quality{padding:4px 12px;font-size:10px;}
+body.essential #chart-col{overflow:hidden;}
+body.essential #chart-area{min-height:0;}
+body.essential #chart-wrap{min-height:250px;}
+body.essential #flow-inspector{padding:8px 14px;max-height:140px;overflow:auto;}
+body.essential #flow-inspector header{gap:8px;font-size:10px;flex-wrap:wrap;}
+body.essential #flow-inspector header>div{margin-right:auto;display:flex;gap:12px;align-items:center;}
+body.essential #inspect-time{font-size:10px;margin:0;}
+body.essential #flow-coverage{font-size:10px;margin:4px 0;line-height:1.4;}
+body.essential #flow-metrics{gap:8px;}
+body.essential #flow-metrics>div{padding:6px 10px;display:flex;gap:10px;align-items:center;justify-content:space-between;}
+body.essential #flow-metrics>div>span{font-size:10px;}
+body.essential #flow-metrics strong{font-size:15px;margin:0;white-space:nowrap;}
+body.essential #flow-inspector:not(.inspector-expanded) #flow-metrics small,body.essential #flow-inspector:not(.inspector-expanded) .metric-note{display:none;}
+body.essential #flow-inspector.inspector-expanded{max-height:32vh;}
+body.essential #flow-inspector.inspector-expanded #flow-metrics>div{display:block;padding:10px;}
+#inspection-dialog{background:var(--panel);color:var(--text);border:1px solid var(--border2);border-radius:9px;padding:24px;width:min(1050px,calc(100vw - 32px));max-height:85vh;overflow:auto;}
+#inspection-dialog details{padding:15px 0;border-top:1px solid var(--border);font-size:12px;}
+#inspection-dialog summary{cursor:pointer;font-weight:600;}#inspection-dialog pre{white-space:pre-wrap;font:11px/1.8 var(--mono);color:var(--muted);}
+#inspection-dialog p{font-size:12px;color:var(--muted);line-height:1.7;}
+body.zen #flow-inspector,body.zen #context-rail,body.zen #essential-context{display:none!important;}
+@media(min-width:1181px){body.essential #chart-toolbar{flex-wrap:nowrap;}body.essential #chart-area{height:100%;}}
+@media(max-width:1180px){body.essential #sidebar{flex-basis:auto;}body.essential #chart-wrap{min-height:480px;}body.essential #chart-col{overflow:visible;}}
+@media(max-width:700px){body.essential #chart-toolbar{flex-wrap:wrap;}body.essential #hero{width:100%;}body.essential #chart-toolbar .toolbar-right{margin-left:0;width:100%;}#price-controls{flex-wrap:wrap;}.essential #filter-summary{width:100%;}body.essential #flow-inspector{max-height:190px;}body.essential #flow-metrics{grid-template-columns:repeat(3,minmax(0,1fr));}body.essential #flow-metrics>div{display:block;padding:7px;}body.essential #flow-metrics strong{margin-top:5px;font-size:13px;}body.essential #flow-metrics>div>span{font-size:9px;}body.essential #chart-wrap{min-height:420px;}}
+body.essential #topbar{padding:6px 12px;gap:12px;}
+body.essential .brand-text small{display:none;}
+body.essential #tabs button{display:grid;grid-template-columns:auto auto;column-gap:12px;min-width:110px;padding:5px 9px;}
+body.essential #tabs .t-sym{grid-column:1;grid-row:1;}body.essential #tabs .t-px{grid-column:2;grid-row:1;}body.essential #tabs .t-chg{grid-column:2;grid-row:2;}body.essential #tabs .t-spark{display:none;}
+body.essential #chart-toolbar .toolbar-right{display:flex;align-items:center;}
+body.essential #gex-overlay{display:none;}

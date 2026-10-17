@@ -27,6 +27,7 @@ let launchedBrowser;
  await page.addInitScript(()=>localStorage.setItem('gex.tour','1'));
  await page.goto('http://127.0.0.1:8010');
  await page.waitForFunction(()=>window.state?.bars.size>0&&state.ws?.readyState===1);
+ await page.locator('#cockpit-detail').click();
  await page.evaluate(async()=>{
    closeWS();stopFlowPoll();stopFlowBarsPoll();state.interval='5m';await loadHistory();
    state.flowBars=state.histArr.map((b,i)=>({t:b.time,big_n:i%3+1,big_total:1000+i*10,
@@ -78,11 +79,13 @@ let launchedBrowser;
  await page.selectOption('#levels-position','right');
  await page.evaluate(()=>window.dispatchEvent(new Event('flow-data')));
  assert.match(await page.locator('#flow-coverage').innerText(),/60 bougies reçues/);
+ await page.locator('#inspection-open').click();
  await page.evaluate(()=>{$('flow-journal').open=true;});
  assert.equal(await page.locator('#journal-rows tr').count(),60);
  await page.locator('#journal-rows button').first().click();
  assert.match(await page.locator('#inspect-time').innerText(),/épinglée/);
  assert.match(await page.locator('#flow-metrics').innerText(),/épisodes/);
+ await page.locator('#inspection-dialog .dialog-close').click();
  await page.locator('#inspect-unpin').click();
  await page.evaluate(()=>{$('flow-journal').open=false;state.chart.timeScale().setVisibleLogicalRange({from:-2,to:62});});
  // Draw using real pointer events, then translate horizontally AND vertically.
@@ -134,6 +137,7 @@ let launchedBrowser;
  assert.match(await page.locator('#context-levels').innerText(),/Call Wall/);
  await page.locator('#cockpit-flow-settings').click();await page.locator('#flow-read').click();
  await page.screenshot({path:'.cache/ui/flow-draw-desktop.png'});
+ await page.locator('#inspection-open').click();
  // Combined replay must not use the second candle's future model levels.
  await page.evaluate(()=>{state.symbol='BTC';state.flowBarsContext=flowContext();$('closed-flow-replay').open=true;});
  const replayBase=await page.evaluate(()=>state.flowBars[0].t);
@@ -153,6 +157,7 @@ let launchedBrowser;
  assert.equal(await page.evaluate(()=>draw.shapes[0].hidden),true);
  await page.evaluate(()=>{drawUndo();$('drawing-manager').open=false;});
  assert.equal(await page.evaluate(()=>!!draw.shapes[0].hidden),false);
+ await page.locator('#inspection-dialog .dialog-close').click();
  await page.setViewportSize({width:390,height:844});
  await page.locator('#cockpit-flow-settings').click();
  assert(await page.locator('#abs-buy').isVisible());

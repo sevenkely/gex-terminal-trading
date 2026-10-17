@@ -238,3 +238,28 @@ recette navigateur de positionnement, journal, objets et non-utilisation des niv
 futurs. Les fixtures isolent leurs moteurs des checkpoints de production.
 **Recette de marché réelle / séance entière : non effectuée ici**, connexion
 fournisseur toujours nécessaire. Les tests synthétiques ne valent pas ce sign-off.
+
+## Vue essentielle — graphique prioritaire
+
+La présentation **Essentielle** est désormais activée par défaut. Elle conserve
+Classique / profil global et Analyse / grille par échéance, sans changer les
+calculs ni les abonnements. **Outils avancés** réaffiche les panneaux détaillés ;
+la préférence est conservée dans `gex.presentation`.
+
+- Graphique dégagé, rail de niveaux hors des bougies, contexte à droite : régime,
+  Net GEX, mouvement attendu, mode du prix, âge de chaîne et référence OI.
+- **Cadrer le prix** revient aux bougies visibles sans imposer les niveaux éloignés.
+  **Agrandir** active le mode Zen existant. Le cadrage initial dépend de la largeur
+  (15 à 100 bougies), avec un intervalle de 5 min par défaut ; le dernier intervalle
+  choisi est conservé dans `gex.chart.interval`.
+- L’inspecteur reste compact, avec **Détails** pour les chiffres par bougie.
+  **Journal / Replay / Dessins** ouvre les outils d’inspection dans une fenêtre
+  distincte, sans réduire durablement le graphique.
+- Sur mobile, le graphique conserve une hauteur minimale de 420 px ; le contexte
+  et les niveaux restent accessibles plus bas, sans défilement horizontal de page.
+
+Module de présentation : `frontend/chart-layout.js`. La recette
+`tests/chart_layout_browser.cjs` utilise la fixture locale sur 8010 : modes,
+intervalle et persistance après rechargement, cadrage, Zen, dialogue, absence de
+débordement et tailles 1440×1000, 1366×768, 1024×900 et 390×844.
+Ces contrôles ne constituent pas une validation du flux marché réel.

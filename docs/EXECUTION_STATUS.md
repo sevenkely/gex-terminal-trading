@@ -97,3 +97,20 @@ L’interface expose les données manquantes au lieu de les assimiler à zéro.
 La cause exacte sur l’installation utilisateur et le sign-off de marché restent
 à confronter à son flux réel : aucun backfill fournisseur ni couverture exhaustive
 n’est promis. Les observations antérieures à la conservation ne sont pas recréées.
+
+### Livraison graphique prioritaire
+
+Vue essentielle par défaut, contexte réduit aux informations importantes,
+intervalle mémorisé, cadrage du prix, agrandissement et inspecteur compact.
+Classique, Analyse et outils avancés sont conservés. Journal, diagnostics de
+couverture, replay et gestionnaire de dessins sont regroupés dans un dialogue.
+
+Validation : 66 tests Python, suite crypto hors ligne et trois recettes navigateur
+(cockpit, flux/dessins, nouvelle présentation) réussies. Quatre dimensions d’écran
+vérifiées, sans débordement horizontal. Les données de recette sont synthétiques.
+
+Limite externe inchangée : la connexion Deribit de cet environnement est refusée
+(ConnectionReset / TLS EOF). La couverture réelle au-delà des trois dernières
+bougies et une séance continue ne sont donc pas certifiées ici. La persistance
+conserve les observations reçues, mais ne reconstitue ni des prints jamais reçus,
+ni un historique tick exhaustif. Aucun compte de trading ni abonnement ajouté.

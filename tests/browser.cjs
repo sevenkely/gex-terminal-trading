@@ -37,6 +37,7 @@ let launchedBrowser;
  assert.equal(await page.locator('#workspace-preset').inputValue(),'classic');
  assert(await page.locator('#sidebar').isVisible());
  assert.equal(await page.locator('#exposure-dock').isVisible(),false);
+ await page.locator('#cockpit-detail').click();
  assert(await page.locator('#sbp-gex').isVisible());
  await page.selectOption('#workspace-preset','analysis');
  // New linked cockpit: bounded expiry grid, keyboard cell selection and saved layouts.

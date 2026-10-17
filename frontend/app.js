@@ -23,7 +23,7 @@ const PERIOD = { "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "1d":
 
 const state = {
   symbol: "SPX",
-  interval: "1d",
+  interval: ["1m","5m","15m","30m","1h","1d"].includes(localStorage.getItem("gex.chart.interval"))?localStorage.getItem("gex.chart.interval"):"5m",
   filter: "all",
   win: Number(localStorage.getItem("gex.win") || 3),
   ladderOn: localStorage.getItem("gex.ladder") !== "0",
@@ -60,6 +60,8 @@ const state = {
   flowBarsUnit: "contrats",
   flowTipEl: null,
 };
+
+document.querySelectorAll("#intervals button").forEach(b=>b.classList.toggle("active",b.dataset.iv===state.interval));
 
 /* ---------------- odomètre (transition chiffrée) ---------------- */
 function tweenNum(el, to, fmt) {
@@ -135,7 +137,7 @@ function initChart() {
   });
   // axe volume masqué : la bande delta/CVD occupe le bas du chart (voir drawDeltaBand)
   chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.755, bottom: 0.175 }, visible: false });
-  chart.priceScale("right").applyOptions({ minimumWidth: 122, scaleMargins:{top:.16,bottom:.30} });
+  chart.priceScale("right").applyOptions({ minimumWidth: 96, scaleMargins:{top:.12,bottom:.25} });
   chart.timeScale().subscribeVisibleLogicalRangeChange(() => { queueGamma(); queueDraw(); queueFlow(); });
   chart.priceScale("right").subscribeVisibleValueRangeChange?.(() => { queueGamma(); queueFlow(); });
 
@@ -203,15 +205,15 @@ function drawLevels(L, profile) {
     const c = W.call[i], p = W.put[i];
     if (T.cw && c) setLine("cw" + i, c.strike, {
       color: i ? hexA(WALL_C, 0.28 + 0.62 * Math.abs(c.gex) / maxC) : WALL_C,
-      lineWidth: i ? 1 : 2, lineStyle: S, axisLabelVisible: i===0, title: "",
+      lineWidth: i ? 1 : 2, lineStyle: S, axisLabelVisible: i===0, title: i === 0 ? "Call Wall 1" : "",
     }); else setLine("cw" + i, null);
     if (T.pw && p) setLine("pw" + i, p.strike, {
       color: i ? hexA(WALL_P, 0.28 + 0.62 * Math.abs(p.gex) / maxP) : WALL_P,
-      lineWidth: i ? 1 : 2, lineStyle: S, axisLabelVisible: i===0, title: "",
+      lineWidth: i ? 1 : 2, lineStyle: S, axisLabelVisible: i===0, title: i === 0 ? "Put Wall 1" : "",
     }); else setLine("pw" + i, null);
   }
   const flip = L.gamma_flip ?? L.zero_gex;
-  if (T.flip && flip != null) setLine("flip", flip, { color: FLIP_C, lineWidth: 1, lineStyle: S, axisLabelVisible: true, title: "" });
+  if (T.flip && flip != null) setLine("flip", flip, { color: FLIP_C, lineWidth: 1, lineStyle: S, axisLabelVisible: true, title: "Zero Gamma" });
   else setLine("flip", null);
   if (T.pain && L.max_pain != null) setLine("pain", L.max_pain, { color: hexA(PAIN_C, .7), lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
   else setLine("pain", null);
@@ -450,12 +452,14 @@ async function loadHistory() {
   queueDraw();
 }
 
-/* zoom par défaut lisible : ~3 fenêtres de séance en intraday, tout en 1D */
+/* Zoom lisible selon la largeur ; 100 bougies maximum, sans niveaux éloignés. */
 function smartZoom() {
-  const n = state.bars.size;
-  if (state.barsDaily || n <= 200) { state.chart.timeScale().fitContent(); return; }
-  const want = { "1m": 390, "5m": 200, "15m": 160, "30m": 140, "1h": 180 }[state.interval] || 200;
-  state.chart.timeScale().setVisibleLogicalRange({ from: n - want, to: n + (gp.on ? 18 : 6) });
+  const n=state.bars.size;
+  if(!n||!state.chart)return;
+  if(state.barsDaily){state.chart.timeScale().setVisibleLogicalRange({from:Math.max(0,n-100),to:n+3});return;}
+  const available=$('chart').clientWidth-state.chart.priceScale('right').width();
+  const want=Math.max(15,Math.min(100,Math.floor(available/13)));
+  state.chart.timeScale().setVisibleLogicalRange({from:Math.max(0,n-want),to:n+3});
 }
 
 /* échelle de prix incluant les niveaux GEX (bouton NIVEAUX) */
@@ -2802,7 +2806,7 @@ document.querySelectorAll("#intervals button").forEach((b) =>
   b.addEventListener("click", async () => {
     document.querySelectorAll("#intervals button").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
-    state.interval = b.dataset.iv;
+    state.interval = b.dataset.iv;localStorage.setItem("gex.chart.interval",state.interval);
     state.lastBar = null;   // évite qu'un tick pousse une bougie d'un autre TF pendant le fetch
     try { await loadHistory(); drawLevels(state.levels, state.profile); } catch (e) { err(e.message); }
     loadFlowBars();
