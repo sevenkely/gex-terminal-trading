@@ -1,0 +1,334 @@
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("vendor/fonts/IBMPlexSans-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("vendor/fonts/IBMPlexSans-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("vendor/fonts/IBMPlexSans-SemiBold.woff2") format("woff2");
+  font-weight: 600 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("vendor/fonts/IBMPlexMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("vendor/fonts/IBMPlexMono-Medium.woff2") format("woff2");
+  font-weight: 500 900;
+  font-display: swap;
+}
+:root {
+  --sans: "IBM Plex Sans", sans-serif;
+  --mono: "IBM Plex Mono", monospace;
+}
+body.design-studio {
+  font-family: var(--sans);
+}
+body.design-studio .brand {
+  flex-shrink: 0;
+}
+body.design-studio .brand-wordmark {
+  display: block;
+  width: 132px;
+  height: 28px;
+}
+body.design-studio .logo {
+  color: #63cfc4;
+}
+[data-theme="daylight"] .brand-wordmark {
+  filter: brightness(0.35);
+}
+body.design-studio #workspace-bar {
+  gap: 8px;
+}
+body.design-studio #workspace-bar button,
+body.design-studio #workspace-bar select {
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+body.design-studio #context-rail header,
+body.design-studio #essential-context header {
+  font: 600 12px var(--sans);
+  letter-spacing: 0.02em;
+}
+body.design-studio .context-level span {
+  font: 500 12px var(--sans);
+}
+body.design-studio .essential-stat > span {
+  font: 400 12px var(--sans);
+}
+body.design-studio #essential-regime {
+  font: 500 13px var(--sans);
+  letter-spacing: 0;
+}
+body.design-studio #essential-source span {
+  font: 400 11px var(--sans);
+}
+body.design-studio #essential-source b {
+  font: 400 11px/1.5 var(--sans);
+}
+body.design-studio #context-level-note,
+body.design-studio #offscreen-levels,
+body.design-studio #essential-context p {
+  font: 400 11px/1.55 var(--sans);
+}
+body.design-studio #flow-inspector header {
+  font-family: var(--sans);
+  font-size: 11px;
+}
+body.design-studio #flow-inspector button {
+  font: 400 12px var(--sans);
+}
+body.design-studio #flow-coverage {
+  font-size: 11px;
+}
+#market-indicators-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  pointer-events: none;
+}
+#indicator-summary {
+  flex: 0 0 auto;
+  display: block;
+  width: 100%;
+  padding: 5px 14px;
+  text-align: left;
+  background: var(--bg2);
+  color: var(--muted);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  font: 11px/1.5 var(--sans);
+  cursor: pointer;
+  white-space: normal;
+}
+#indicator-summary:hover {
+  color: var(--text);
+  background: #67dfda08;
+}
+#indicator-summary.anchor-armed {
+  color: #e4c989;
+  background: #e4c98912;
+}
+#indicator-dialog {
+  width: min(980px, calc(100vw - 28px));
+  max-height: 88vh;
+  overflow: auto;
+  padding: 26px;
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  font: 13px/1.6 var(--sans);
+}
+.indicator-dialog-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 15px;
+}
+.indicator-dialog-head .eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--studio-accent);
+}
+#indicator-dialog h2 {
+  font: 500 27px/1.2 var(--sans);
+  letter-spacing: -0.03em;
+  margin: 5px 0 14px;
+}
+#indicator-dialog h3 {
+  font: 500 17px var(--sans);
+}
+#indicator-dialog h3 small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+#indicator-dialog button {
+  padding: 7px 12px;
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  background: var(--bg2);
+  color: var(--text);
+  font: 12px var(--sans);
+  cursor: pointer;
+}
+#indicator-dialog .indicator-method {
+  padding: 12px 14px;
+  background: #67dfda08;
+  border-left: 2px solid #67dfda55;
+  color: var(--muted);
+  margin-bottom: 18px;
+}
+#indicator-dialog section {
+  padding: 20px 0;
+  border-top: 1px solid var(--border);
+}
+#indicator-dialog section > header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+#indicator-dialog section > header > label {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.indicator-number {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  background: #67dfda0b;
+  color: var(--studio-accent);
+  border: 1px solid #67dfda22;
+  border-radius: 8px;
+  font: 12px var(--mono);
+}
+.indicator-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+.indicator-fields > label,
+.indicator-base > label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+#indicator-dialog input:not([type="checkbox"]),
+#indicator-dialog select {
+  min-width: 0;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  background: var(--bg2);
+  color: var(--text);
+  font: 13px var(--sans);
+}
+#indicator-dialog input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+#indicator-dialog input[type="color"] {
+  padding: 3px;
+  height: 37px;
+}
+#indicator-dialog input:disabled,
+#indicator-dialog select:disabled {
+  opacity: 0.4;
+}
+.indicator-base {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  margin-bottom: 18px;
+}
+.indicator-base > label {
+  flex: 1;
+}
+.anchor-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 20px;
+}
+.anchor-row span {
+  font: 11px var(--mono);
+  color: var(--muted);
+}
+.indicator-coverage p {
+  color: var(--muted);
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
+#indicator-provenance {
+  color: var(--text);
+}
+body.design-studio .context-level[data-stale="true"] {
+  border-style: dashed;
+}
+.level-quality {
+  display: block;
+  grid-column: 2/-1;
+  font: 11px/1.4 var(--sans);
+  color: #d7ba7a;
+}
+@media (max-width: 1180px) {
+  .indicator-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  body.design-studio #workspace-bar .motion-control {
+    margin-left: 0;
+  }
+}
+@media (max-width: 700px) {
+  #indicator-dialog {
+    padding: 18px;
+  }
+  #indicator-dialog h2 {
+    font-size: 23px;
+  }
+  .indicator-fields {
+    grid-template-columns: 1fr;
+  }
+  .indicator-base {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  #indicator-summary {
+    font-size: 11px;
+    padding: 6px 10px;
+  }
+  body.design-studio .brand-wordmark {
+    width: 116px;
+  }
+}
+body.design-studio #essential-gex[data-sign="negative"] {
+  color: var(--red);
+}
+body.design-studio #essential-gex[data-sign="positive"] {
+  color: var(--green);
+}
+body.design-studio #essential-gex[data-sign="unknown"] {
+  color: var(--muted);
+}
+#indicator-dialog {
+  margin: auto;
+}
+body.design-studio #indicator-dialog::backdrop {
+  backdrop-filter: none;
+  background: #040a13df;
+}
+#indicator-dialog .indicator-dialog-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--panel);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}

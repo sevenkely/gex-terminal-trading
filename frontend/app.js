@@ -114,7 +114,7 @@ function initChart() {
   const el = $("chart");
   el.innerHTML = "";
   const chart = LightweightCharts.createChart(el, {
-    layout: { background: { color: "transparent" }, textColor: "#8492a6", fontSize: 11, fontFamily: "'JetBrains Mono', monospace" },
+    layout: { background: { color: "transparent" }, textColor: "#8492a6", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace" },
     grid: { vertLines: { color: "rgba(26,34,51,.55)" }, horzLines: { color: "rgba(26,34,51,.55)" } },
     rightPriceScale: { borderColor: "#1a2233", scaleMargins: { top: 0.07, bottom: 0.22 } },
     timeScale: { borderColor: "#1a2233", timeVisible: true, secondsVisible: false, rightOffset: gp.on ? 18 : 6, barSpacing: 7 },
@@ -158,6 +158,7 @@ function initChart() {
   chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
   state.chart = chart; state.candles = candles; state.volume = volume;
   state.lines = {}; state.pins.clear();
+  window.dispatchEvent(new Event("gex-chart-ready"));
 }
 
 function renderOhlc(b) {
@@ -1294,7 +1295,7 @@ function drawDeltaBand() {
   if (lg) lg.insertAdjacentHTML("beforeend",
     `<span>Δ ${sgn(last.delta || 0)}${unit} · CVD <b>${sgn(last.cvd || 0)}${unit}</b> · ${bars.length} b.</span>`);
   // bornes de l'échelle CVD
-  ctx.font = "700 8px 'JetBrains Mono', monospace";
+  ctx.font = "700 8px 'IBM Plex Mono', monospace";
   ctx.fillStyle = "rgba(139,147,167,.65)"; ctx.textAlign = "right";
   ctx.fillText(sgn(hi) + unit, plotR - 6, top + 7);
   ctx.fillText(sgn(lo) + unit, plotR - 6, bot - 1);
@@ -1358,7 +1359,7 @@ $("gp-toggle").addEventListener("click", () => {
 function queueGamma() {
   if (gp.queued) return;
   gp.queued = true;
-  requestAnimationFrame(() => { gp.queued = false; drawGamma(); });
+  requestAnimationFrame(() => { gp.queued = false; drawGamma(); window.marketIndicators?.queue(); });
 }
 
 /* --------- B : strike ladder façon DOM --------- */
@@ -1483,7 +1484,7 @@ function drawTerm(rows) {
   const pts = rows.filter((r) => r.atm_iv != null).map((r) => ({ x: r.dte, y: r.atm_iv * 100, r }));
   if (pts.length < 2) {
     ctx.fillStyle = "rgba(139,147,167,.5)";
-    ctx.font = "700 9px 'JetBrains Mono', monospace";
+    ctx.font = "700 9px 'IBM Plex Mono', monospace";
     ctx.fillText("structure par terme indisponible", 10, H / 2);
     return;
   }
@@ -1496,7 +1497,7 @@ function drawTerm(rows) {
   const Y = (v) => pad.t + ih - ((v - ymin) / (ymax - ymin)) * ih;
   // grille + labels de vol
   ctx.strokeStyle = "rgba(26,34,51,.85)"; ctx.lineWidth = 1;
-  ctx.font = "700 8px 'JetBrains Mono', monospace";
+  ctx.font = "700 8px 'IBM Plex Mono', monospace";
   for (let k = 0; k <= 2; k++) {
     const v = ymin + ((ymax - ymin) * k) / 2, y = Y(v);
     ctx.beginPath(); ctx.moveTo(pad.l, y + .5); ctx.lineTo(W - pad.r, y + .5); ctx.stroke();
@@ -1520,7 +1521,7 @@ function drawTerm(rows) {
     ctx.beginPath(); ctx.arc(X(i), Y(p.y), 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   });
   // labels d'échéance
-  ctx.fillStyle = "rgba(139,147,167,.6)"; ctx.font = "700 7.5px 'JetBrains Mono', monospace";
+  ctx.fillStyle = "rgba(139,147,167,.6)"; ctx.font = "700 7.5px 'IBM Plex Mono', monospace";
   ctx.textAlign = "center";
   const every = Math.ceil(pts.length / 6);
   pts.forEach((p, i) => { if (i % every === 0 || i === pts.length - 1) ctx.fillText(fmtExpiry(p.r.expiry), X(i), H - 4); });
@@ -1529,7 +1530,7 @@ function drawTerm(rows) {
 
 /* --------- E : règles d'alerte personnelles --------- */
 const RULE_KINDS = { cross: "Franchit", near: "Approche ≤", regime: "Régime γ" };
-const RULE_LEVELS = { cw1: "Call Wall 1", pw1: "Put Wall 1", flip: "Zero Gamma", pain: "MAX PAIN", vwap: "VWAP", price: "Prix fixe" };
+const RULE_LEVELS = { cw1: "Call Wall 1", pw1: "Put Wall 1", flip: "Zero Gamma", pain: "MAX PAIN", vwap: "VWAP configuré (estimé)", price: "Prix fixe" };
 const rules = {
   list: storedJSON("gex.rules", []),
   log: storedJSON("gex.rlog", []),
@@ -1546,7 +1547,7 @@ function levelPrice(level) {
     case "pw1": return W.put && W.put[0] ? W.put[0].strike : null;
     case "flip": return L.gamma_flip ?? L.zero_gex ?? null;
     case "pain": return L.max_pain ?? null;
-    case "vwap": return state.sess ? state.sess.vwapLast : null;
+    case "vwap": return window.marketIndicatorsManaged ? window.marketIndicators?.latestVWAP(true) ?? null : state.sess?.vwapLast ?? null;
     default: return null;
   }
 }
@@ -1658,7 +1659,7 @@ function renderReaction() {
     { n: "Put Wall 1", px: W.put && W.put[0] ? W.put[0].strike : null, c: WALL_P },
     { n: "Zero Gamma", px: L.gamma_flip ?? L.zero_gex ?? null, c: FLIP_C },
     { n: "PAIN", px: L.max_pain ?? null, c: PAIN_C },
-    { n: "VWAP", px: state.sess ? state.sess.vwapLast : null, c: "#8492a6" },
+    { n: "VWAP estimé", px: window.marketIndicatorsManaged ? window.marketIndicators?.latestVWAP() ?? null : state.sess?.vwapLast ?? null, c: "#8492a6" },
   ].filter((l) => l.px > 0);
   if (!lvls.length || bars.length < 12) {
     tab.innerHTML = '<div class="alerts-empty muted">Pas assez d\'historique pour mesurer la réaction des niveaux.</div>';
@@ -1884,7 +1885,7 @@ function drawStrip() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = "rgba(255,255,255,.35)";
-  ctx.font = "700 8px 'JetBrains Mono', monospace";
+  ctx.font = "700 8px 'IBM Plex Mono', monospace";
   ctx.fillText("γ t×K 15m", 6, 12);
   const hd = heat.data;
   if (!hd || !hd.strikes || !hd.matrix || !hd.matrix.length) {
@@ -2023,7 +2024,7 @@ function drawGamma() {
 
   // 1bis) volume profile session (barres grises depuis le bord droit) + POC/VA
   const SE = state.sess;
-  if (T.prof && SE) {
+  if (T.prof && SE && !window.marketIndicatorsManaged) {
     const { lo, bw, vol, max } = SE.prof;
     ctx.fillStyle = "rgba(139,147,167,.16)";
     for (let i = 0; i < vol.length; i++) {
@@ -2041,7 +2042,7 @@ function drawGamma() {
       ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash(dash);
       ctx.beginPath(); ctx.moveTo(0, y + .5); ctx.lineTo(plotR, y + .5); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = color; ctx.font = "700 8px 'JetBrains Mono', monospace";
+      ctx.fillStyle = color; ctx.font = "700 8px 'IBM Plex Mono', monospace";
       ctx.fillText(label, 6, y - 3);
     };
     pl(SE.poc, "rgba(245,197,66,.8)", [], "POC");
@@ -2049,7 +2050,7 @@ function drawGamma() {
     pl(SE.val, "rgba(139,147,167,.55)", [3, 3], "VAL");
   }
   // 1ter) VWAP session + bandes ±1σ / ±2σ
-  if (T.vwap && SE && state.lastBar) {
+  if (T.vwap && SE && state.lastBar && !window.marketIndicatorsManaged) {
     const line = (arr, color, width, dash) => {
       ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash);
       ctx.beginPath();
@@ -2229,7 +2230,7 @@ function drawGamma() {
       if (!over) break;
     }
   }
-  ctx.font = "700 9px 'JetBrains Mono', monospace";
+  ctx.font = "700 9px 'IBM Plex Mono', monospace";
   for (const c of vis) {
     if (c.y < 2) continue;
     const w = Math.min(W-12,Math.max(chipW,ctx.measureText(c.txt).width+12)), chipX=W-w-3;
@@ -2258,7 +2259,7 @@ function drawGamma() {
     if (y == null || (y >= 4 && y <= H - 4)) return;
     const top = y < 0;
     const txt = `${top ? "▲" : "▼"} ${label} ${fmtPrice(px)}`;
-    ctx.font = "700 10px 'JetBrains Mono', monospace";
+    ctx.font = "700 10px 'IBM Plex Mono', monospace";
     const w = ctx.measureText(txt).width + 14;
     const yy = top ? 6 : H - 24;
     ctx.fillStyle = bg;
@@ -2482,7 +2483,7 @@ function renderHeatmap() {
     ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
     ctx.beginPath(); ctx.moveTo(M.l, y); ctx.lineTo(W - M.r, y); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = color; ctx.font = "600 9px 'JetBrains Mono', monospace";
+    ctx.fillStyle = color; ctx.font = "600 9px 'IBM Plex Mono', monospace";
     ctx.fillText(label, M.l + 4, y - 3);
     ctx.restore();
   };
@@ -2505,7 +2506,7 @@ function renderHeatmap() {
   ctx.restore();
 
   // axes
-  ctx.fillStyle = "#8492a6"; ctx.font = "500 9.5px 'JetBrains Mono', monospace";
+  ctx.fillStyle = "#8492a6"; ctx.font = "500 9.5px 'IBM Plex Mono', monospace";
   const stepS = Math.max(1, Math.round(nS / 9));
   for (let s = 0; s < nS; s += stepS) {
     ctx.fillText(fmtPx(strikes[s], state.symbol), W - M.r + 8, M.t + s * rowH + rowH / 2 + 3);
@@ -3470,7 +3471,7 @@ function drawRender() {
   if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
   const ctx = cv.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
-  ctx.font = "700 9.5px 'JetBrains Mono', monospace";
+  ctx.font = "700 9.5px 'IBM Plex Mono', monospace";
   ctx.save();ctx.beginPath();ctx.rect(0,28,W-(state.chart.priceScale("right").width()||122),H*.73-28);ctx.clip();
   const all = draw.draft ? [...draw.shapes, draw.draft] : draw.shapes;
   all.forEach((sh, i) => {

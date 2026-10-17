@@ -126,3 +126,18 @@ Vérifications : quatre recettes navigateur réussies (cockpit, flux/dessins,
 présentation essentielle, design/animations), 66 tests Python et syntaxe des
 scripts. Les huit onglets et quatre dimensions d’écran sont testés ; la recette
 visuelle reste synthétique et ne certifie pas la couverture du marché réel.
+
+### VP / VWAP configurables, puis typographie et signature
+
+Livré dans l’ordre : VP multi-périodes et réglages de construction/VA, VWAP
+multi-périodes et ancré avec bandes, puis fontes locales IBM Plex et signature
+GEX dédiée. Base OHLCV indépendante de l’intervalle du graphique, ancrages par
+instrument, provenance et limites explicites. Les anciens rendus VP/VWAP ne sont
+plus dessinés en doublon ; les autres outils GEX restent disponibles.
+
+Recettes : calculs purs Node, nouveau parcours navigateur indicateurs, et les
+quatre recettes existantes (cockpit, flux/dessins, design, présentation essentielle).
+Les scénarios nouveaux incluent le clic d’ancrage et son annulation, la persistance,
+le changement d’intervalle sans changement de base, le volume nul et l’échec source.
+Aucune validation marché live ni couverture historique exhaustive n’est déduite de
+ces fixtures. Voir WORKSPACE.md pour méthode OHLCV, sessions et limites.

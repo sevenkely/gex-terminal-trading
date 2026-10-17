@@ -289,3 +289,77 @@ restent pour la compatibilité ; leur rendu ticker est court-circuité.
 Les marques tierces ne signifient pas une affiliation. Le pack de logos
 comporte une licence **CC BY-NC-SA 4.0**, conservée avec les assets ; vérifier une
 licence adaptée avant une redistribution commerciale.
+
+## Indicateurs configurables et identité Plex
+
+Le bouton **Indicateurs · VP / VWAP** ouvre les réglages indépendants du panneau
+GEX. `indicator-math.js` contient les calculs purs, `indicators.js` leur chargement
+et rendu, et `indicators.css` les réglages et la typographie. Les nouveaux rendus
+ne dépendent pas du bouton Gamma ni de son canvas (y compris en vue essentielle).
+
+### Volume Profile
+
+- Daily/session, Weekly (lundi), Monthly, plage visible ou ancrage par clic.
+- Dernière période disponible, précédente disponible ou trois profils juxtaposés.
+  La largeur de chaque profil est normalisée par son propre volume maximum : ce
+  n’est pas une comparaison des volumes absolus entre périodes.
+- Séance automatique selon actif, journée dans un fuseau choisi, RTH New York
+  09:30–16:00 ou ETH New York 18:00–17:00 (pause 17:00–18:00).
+- Nombre de niveaux (8–256) ou pas de prix, Value Area réglable, POC/VAH/VAL,
+  côté, largeur, opacité et couleurs. Un pas demandant plus de 512 niveaux est
+  refusé explicitement, sans blocage du navigateur ni modification silencieuse.
+- Le volume de chaque bougie est réparti uniformément dans les bins low/high.
+  Ce **VP estimé OHLCV n’est pas un profil exact de transactions ni un TPO**.
+
+### VWAP
+
+- Daily/session, Weekly, Monthly ou Anchored VWAP ; réglages de séance et fuseau
+  indépendants du VP. L’ancrage se choisit par clic sur une bougie ; Échap annule
+  sans modifier la période. Les ancrages sont isolés par instrument.
+- Prix typique `(high + low + close) / 3`, pondéré par le volume. Variance pondérée
+  calculée de façon stable. Bandes au choix : aucune, ±1/2/3 écarts-types des prix
+  typiques, ou pas en pourcentage du VWAP. Couleur, épaisseur, tirets/pointillés,
+  labels et période précédente disponibles.
+- Les règles d’alerte VWAP utilisent désormais le VWAP configuré, pas l’ancien
+  calcul lié à l’intervalle graphique. Elles n’obtiennent aucune valeur si le VWAP
+  est masqué, la source en erreur/chargement, le dernier point daté du futur ou
+  âgé de plus de `max(600 s, 2 × base)`. Les gardes globales SIM/STALE restent.
+
+### Base, provenance et limites
+
+La base OHLCV choisie (1m, 5m par défaut, 15m, 30m ou 1h) est chargée séparément
+via `/api/history`. Changer les bougies affichées ne change pas ce calcul. La
+plage **Visible** est volontairement dépendante de la fenêtre affichée. Une base
+plus grossière conserve une estimation différente et un historique potentiellement
+plus long, selon le fournisseur. Aucun backfill supplémentaire n’est ajouté.
+
+Source : Deribit perp pour BTC, Yahoo pour cash/ETF/futures continus, **pas les
+options BTC ni le tape Rithmic du contrat natif**. L’unité de volume reste celle du
+fournisseur. Les indices sans volume positif n’ont ni VP ni VWAP. La méthode, les
+horodatages et le nombre de bougies sont consultables dans Source & couverture.
+Une période Weekly/Monthly peut être tronquée ; aucun statut « complet » n’est
+inventé. Les filtres horaires ne certifient pas les jours fériés ou demi-séances.
+La période précédente est la précédente disponible, pas forcément celle du calendrier.
+
+Actualisation toutes les 60 s lorsque l’onglet est visible, sous réserve du cache
+backend (Yahoo 300 s, crypto 60 s). Pendant une actualisation, le rendu précédent
+reste visible et le statut le signale ; une erreur efface les résultats. Les
+réponses d’une ancienne source/instrument sont rejetées. Les profils n’élargissent
+jamais automatiquement l’échelle de prix. Les paramètres sont conservés dans
+`gex.indicators.v1`, les ancrages dans `gex.indicator.anchors`.
+
+### Typographie et marque
+
+IBM Plex Sans pour les libellés, IBM Plex Mono pour les valeurs ; fontes locales
+sous SIL OFL avec licence dans `frontend/vendor/fonts/IBM-Plex-LICENSE.txt`.
+Signature GEX en tracés SVG spécifiques, symbole axe/équilibre, texte terminal
+secondaire. Les mentions de provenance et avertissements ont gagné en lisibilité.
+Les cartes de niveaux signalent désormais les snapshots anciens / projections
+périmées ; le Net GEX distingue sa valeur négative. Aucun mini-histogramme aléatoire,
+faux delta ou « Market Profile » décoratif ajouté.
+
+Validation : `node tests/indicator_math.cjs` et `node tests/indicators_browser.cjs`
+(fixture 8010). Sessions/DST, resets de périodes, conservation du volume, variance,
+préférences corrompues, ancrage réel par clic et annulation, persistance, isolation
+par symbole, base indépendante de l’intervalle, volume nul, source indisponible
+et réglages mobiles sont couverts. Ces contrôles utilisent des données synthétiques.

@@ -111,6 +111,39 @@
       line.append(label, content);
       source.append(line);
     }
+    const age = d?.chain_age_seconds;
+    const staleChain =
+      Number.isFinite(age) && age > (CRYPTO.has(state.symbol) ? 180 : 1800);
+    const quality =
+      d?.projection?.fresh === false
+        ? "Projection périmée"
+        : staleChain
+          ? "Ancien snapshot · " + Math.floor(age / 60) + " min"
+          : !Number.isFinite(age)
+            ? "Fraîcheur inconnue"
+            : "";
+    for (const row of document.querySelectorAll(
+      "#context-levels .context-level",
+    )) {
+      row.dataset.stale = String(!!quality);
+      let badge = row.querySelector(".level-quality");
+      if (quality && !badge) {
+        badge = document.createElement("span");
+        badge.className = "level-quality";
+        row.append(badge);
+      }
+      if (badge) {
+        badge.textContent = quality;
+        badge.hidden = !quality;
+      }
+    }
+    $("essential-gex").dataset.sign = Number.isFinite(
+      state.levels?.net_gex_total,
+    )
+      ? state.levels.net_gex_total < 0
+        ? "negative"
+        : "positive"
+      : "unknown";
     const crypto = CRYPTO.has(state.symbol);
     $("essential-flow-source").parentElement.hidden = !crypto;
     $("essential-flow-source").value = flowSrc;

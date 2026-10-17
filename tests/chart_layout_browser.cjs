@@ -48,6 +48,7 @@ let launchedBrowser;
  assert(await page.locator('body').evaluate(el=>el.classList.contains('essential')));
  for(const viewport of [{width:1366,height:768},{width:1024,height:900},{width:390,height:844}]){
    await page.setViewportSize(viewport);
+   await page.waitForTimeout(150); // Let chart/canvas ResizeObservers settle before checking overflow.
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
    await page.waitForTimeout(150);const bounds=await page.locator('#chart-area').boundingBox();console.log(viewport,bounds.height);assert(bounds.height>=330);
    await page.screenshot({path:'.cache/ui/final-essential-'+viewport.width+'.png',fullPage:true});

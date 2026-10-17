@@ -18,4 +18,5 @@ jobs:
       - run: pip install -r requirements.lock.txt
       - run: pytest -q
       - run: python -m crypto_feed.tests_offline
-      - run: node --check frontend/app.js && node --check frontend/research.js && node --check frontend/access.js && node --check frontend/validation.js && node --check frontend/workspace.js && node --check frontend/cockpit.js && node --check frontend/observed-replay.js && node --check frontend/chart-layout.js && node --check frontend/design.js
+      - run: node --check frontend/app.js && node --check frontend/research.js && node --check frontend/access.js && node --check frontend/validation.js && node --check frontend/workspace.js && node --check frontend/cockpit.js && node --check frontend/observed-replay.js && node --check frontend/chart-layout.js && node --check frontend/design.js && node --check frontend/indicator-math.js && node --check frontend/indicators.js
+      - run: node tests/indicator_math.cjs

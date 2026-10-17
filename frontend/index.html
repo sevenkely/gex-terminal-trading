@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GEX Terminal — Gamma Exposure · Walls · Zero-GEX</title>
 <link rel="stylesheet" href="styles.css?v=9">
-<link rel="stylesheet" href="design.css?v=1">
+<link rel="stylesheet" href="design.css?v=2">
+<link rel="stylesheet" href="indicators.css?v=1">
+<script src="indicator-math.js?v=1"></script>
 <script src="vendor/lightweight-charts.js"></script>
 </head>
 <body>
@@ -15,16 +17,13 @@
   <header id="topbar">
     <div class="brand">
       <div class="logo">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-          <path d="M3 17l5-6 4 4 6-8 3 4" stroke="url(#lg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-          <defs><linearGradient id="lg" x1="3" y1="7" x2="21" y2="17" gradientUnits="userSpaceOnUse">
-            <stop stop-color="#2dd4a7"/><stop offset="1" stop-color="#2dd4a7"/>
-          </linearGradient></defs>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M5 7v10M19 7v10M2 12h20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M8 4v4M16 16v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity=".45"/>
+          <circle cx="12" cy="12" r="3.5" fill="currentColor"/>
         </svg>
       </div>
-      <div class="brand-text">
-        <span>GEX&nbsp;Terminal</span>
-        <small>gamma exposure · walls · zero-gex</small>
+      <div class="brand-text"><img class="brand-wordmark" src="assets/gex-wordmark.svg" alt="GEX Terminal" width="132" height="28">
       </div>
     </div>
 
@@ -730,13 +729,14 @@
 
 <div id="access-overlay" hidden><form id="access-form"><h2>Accès au terminal</h2><p id="access-message" role="status"></p><label>Jeton de lecture<input id="access-token" type="password" autocomplete="off" required></label><button type="submit" class="btn">Ouvrir la session</button></form></div>
 <script src="access.js?v=1"></script>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 <script src="research.js?v=3"></script>
 <script src="validation.js?v=1"></script>
 <script src="workspace.js?v=3"></script>
 <script src="cockpit.js?v=1"></script>
 <script src="observed-replay.js?v=1"></script>
-<script src="chart-layout.js?v=1"></script>
+<script src="chart-layout.js?v=2"></script>
 <script src="design.js?v=1"></script>
+<script src="indicators.js?v=1"></script>
 </body>
 </html>
