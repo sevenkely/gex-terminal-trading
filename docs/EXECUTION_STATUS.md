@@ -13,7 +13,7 @@ Un test synthétique réussi ne devient jamais une validation de données live.
 
 ## Preuves disponibles dans le dépôt
 
-Dernier passage : **55 tests pytest réussis**, tests `crypto_feed` hors ligne
+Dernier passage : **62 tests pytest réussis**, tests `crypto_feed` hors ligne
 réussis et contrôles de syntaxe JavaScript réussis. Un avertissement de
 dépréciation Starlette/httpx (TestClient) subsiste, sans échec.
 
@@ -74,3 +74,15 @@ bougies avec historique d'exposition. Aucun de ces éléments n'a été remplac�
 une reconstitution présentée comme observée. Le lecteur livré porte uniquement
 sur les snapshots réellement enregistrés ; les bandes sont des concentrations du
 snapshot courant, pas une reproduction de la formule propriétaire de Bullflow.
+
+## Graphique : marqueurs et édition des dessins
+
+Livré : résumés big trades / absorption séparés par bougie, historique observé
+borné, montants et épisodes absorption, noms complets des niveaux, couleurs
+personnalisables et édition des dessins temps/prix avec undo/redo. Mode d'emploi
+et limites : [WORKSPACE.md](WORKSPACE.md).
+
+Vérifié hors ligne : 7 tests dédiés flow/API et recette navigateur dédiée, plus
+la recette complète du cockpit (desktop/tablette/mobile). Les tests utilisent
+des événements contrôlés : ils ne prouvent ni un historique fournisseur exhaustif,
+ni une détection certaine d'absorption, ni une validation live d'une séance entière.

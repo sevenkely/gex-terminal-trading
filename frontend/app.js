@@ -127,7 +127,7 @@ function initChart() {
     autoscaleInfoProvider: (original) => (state.fit ? levelsAutoscale(original) : original()),
     upColor: state.colors.up, downColor: state.colors.down,
     wickUpColor: state.colors.up + "bf", wickDownColor: state.colors.down + "bf",
-    borderVisible: false, priceLineColor: "#4f8ef7",
+    borderVisible: true, priceLineColor: "#4f8ef7",
   });
   const volume = chart.addSeries(LightweightCharts.HistogramSeries, {
     priceFormat: { type: "volume" }, priceScaleId: "vol",
@@ -220,9 +220,9 @@ function drawLevels(L, profile) {
 
   // légende compacte
   const lg = [];
-  W.call.slice(0, 3).forEach((e, i) => lg.push(`<span class="green">CW${i + 1} ${fmtPrice(e.strike)}</span>`));
-  W.put.slice(0, 3).forEach((e, i) => lg.push(`<span class="red">PW${i + 1} ${fmtPrice(e.strike)}</span>`));
-  if (flip != null) lg.push(`<span class="yellow">FLIP ${fmtPrice(flip)}</span>`);
+  W.call.slice(0, 3).forEach((e, i) => lg.push(`<span class="green">Call Wall ${i + 1} ${fmtPrice(e.strike)}</span>`));
+  W.put.slice(0, 3).forEach((e, i) => lg.push(`<span class="red">Put Wall ${i + 1} ${fmtPrice(e.strike)}</span>`));
+  if (flip != null) lg.push(`<span class="yellow">Zero Gamma ${fmtPrice(flip)}</span>`);
   if (T.pain && L.max_pain != null) lg.push(`<span class="muted">PAIN ${fmtPrice(L.max_pain)}</span>`);
   $("legend-lines").innerHTML = lg.join("");
 
@@ -392,8 +392,8 @@ function renderProfile(P) {
     if (state.pins.has(k)) row.classList.add("pinned");
     const w = Math.max(2, Math.round((Math.abs(net) / maxAbs) * 48));
     let tags = "";
-    if (k === state.levels.call_wall) tags += "<span class='tag cw'>CW</span>";
-    if (k === state.levels.put_wall) tags += "<span class='tag pw'>PW</span>";
+    if (k === state.levels.call_wall) tags += "<span class='tag cw'>Call Wall</span>";
+    if (k === state.levels.put_wall) tags += "<span class='tag pw'>Put Wall</span>";
     if (i === zgIdx && bd < step) tags += "<span class='tag zg'>ZG</span>";
     row.innerHTML =
       `<span class="k">${fmtPx(k, state.symbol)}${tags}</span>` +
@@ -440,7 +440,7 @@ async function loadHistory() {
   state.barsDaily = iv === "1d";
   state.bars = new Map(j.bars.map((b) => [String(b.time), b]));
   state.histArr = j.bars;
-  state.candles.setData(j.bars);
+  state.candles.setData(j.bars.map(decorateFlowBar));
   computeSession(j.bars);
   state.volume.setData(j.bars.map((b) => ({ time: b.time, value: b.volume, color: b.close >= b.open ? state.colors.up + "4d" : state.colors.down + "4d" })));
   state.lastBar = j.bars.length ? { ...j.bars[j.bars.length - 1] } : null;
@@ -574,9 +574,20 @@ function setMode(m) {
 
 /* ---------------- websocket ---------------- */
 function barKey(tsSeconds) {
-  if (state.barsDaily) return new Date(tsSeconds * 1000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  if (state.barsDaily) {
+    const date = new Date(tsSeconds * 1000);
+    if (CRYPTO.has(state.symbol)) return date.toISOString().slice(0, 10);
+    const day = date.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const hour = Number(
+      date.toLocaleTimeString("en-GB", { timeZone: "America/New_York", hour: "2-digit", hour12: false }),
+    );
+    return ["ES", "NQ", "GC"].includes(state.symbol) && hour >= 18
+      ? new Date(Date.parse(day + "T00:00:00Z") + 86400000).toISOString().slice(0, 10)
+      : day;
+  }
   const p = PERIOD[state.interval] || 300;
-  return Math.floor(tsSeconds / p) * p;
+  const offset=flowBarOffset();
+  return Math.floor((tsSeconds-offset) / p) * p+offset;
 }
 
 function onTick(msg) {
@@ -612,12 +623,12 @@ function onTick(msg) {
     if ((typeof key === "number" && key > lastKey) || (typeof key === "string" && key > String(lastKey))) {
       state.lastBar = { time: key, open: p, high: p, low: p, close: p, volume: 0 };
       state.bars.set(String(key), state.lastBar);
-      state.candles.update({ ...state.lastBar });
+      state.candles.update(decorateFlowBar(state.lastBar));
       state.volume.update({ time: key, value: 0, color: state.colors.up + "4d" });
     } else {
       state.lastBar = { ...state.lastBar, close: p, high: Math.max(state.lastBar.high, p), low: Math.min(state.lastBar.low, p) };
       state.bars.set(String(state.lastBar.time), state.lastBar);
-      state.candles.update({ ...state.lastBar });
+      state.candles.update(decorateFlowBar(state.lastBar));
     }
     if (!state.crosshairActive) renderOhlc(state.lastBar);
   }
@@ -781,9 +792,10 @@ function startFlowPoll() {
   flowBigSeq = 0;
   const poll = async () => {
     try {
+      const sym=state.symbol,source=flowSrc;
       const q = CRYPTO.has(state.symbol) && flowSrc !== "perp" ? `?src=${flowSrc}` : "";
       const r = await fetch(`/api/flow/${state.symbol}${q}`);
-      renderFlow(await r.json());
+      const data=await r.json();if(sym===state.symbol&&source===flowSrc)renderFlow(data);
     } catch { /* silencieux */ }
   };
   poll();
@@ -791,7 +803,7 @@ function startFlowPoll() {
 }
 function stopFlowPoll() { if (flowPoll) { clearInterval(flowPoll); flowPoll = null; } }
 function setFlowSrc(src) {
-  flowSrc = src;
+  flowSrc = src;state.flowBars=[];state.flowBarsContext=null;state.flowCoverageStart=null;$("flow-tip").hidden=true;recolorFlowCandles();queueFlow();
   $("flow-src").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.src === src));
   startFlowPoll();
   loadFlowBars();
@@ -903,236 +915,221 @@ function renderFlow(j) {
   queueFlow();
 }
 
-/* -------- bulles gros trades / absorptions sur le prix (style Deepchart) --------
- * v2 : les prints sont **agrégés par cellule temps×prix** pour rester lisibles en
- * session active — une cellule = une bulle, avec le total et un badge ×N. Les
- * absorptions ne multiplient plus les anneaux : elles marquent la cellule.
+/* One big-trade summary and one independent absorption summary per observed
+ * candle. Aggregation is server-side, retained independently of recent prints.
+ * Chart OHLC anchors are visual references, not execution prices (notably for
+ * options on an index and cash tabs fed by their underlying futures contract).
  */
-const FLOW_COL = { buy: "#2dd4a7", sell: "#f0616d", mixed: "#93a1b5", abs: "#a78bfa" };
-const FLOW_RADIUS = [7, 11, 16, 22];      // 4 classes : r = classe de la cellule
-const FLOW_MAX_BUBBLES = 40;
+const FLOW_COL = { buy: "#2dd4a7", sell: "#f0616d", mixed: "#93a1b5", unknown:"#93a1b5" };
 function setBubbles(on) {
   state.bubbles = on;
   localStorage.setItem("gex.bubbles", on ? "1" : "0");
   const b = $("draw-bubbles");
-  if (b) { b.classList.toggle("active", on); b.classList.toggle("off", !on); }
+  if (b) {
+    b.classList.toggle("active", on);
+    b.classList.toggle("off", !on);
+  }
   const lg = $("flow-legend");
   if (lg) lg.hidden = !on;
   queueFlow();
 }
-function queueFlow() { if (state.flowQueued) return; state.flowQueued = true; requestAnimationFrame(() => { state.flowQueued = false; flowRender(); drawDeltaBand(); }); }
-
-// temps -> x : timeToCoordinate, sinon la bougie la plus proche (l'événement peut
-// tomber entre deux bougies ou hors du jeu de données affiché)
-function flowX(ts) {
-  const t = state.chart?.timeScale();
-  if (!t) return null;
-  const x = t.timeToCoordinate(ts);
-  if (x != null) return x;
-  const times = [...state.bars.keys()].map(Number).sort((a, b) => a - b);
-  if (!times.length) return null;
-  let lo = 0, hi = times.length - 1;
-  while (lo < hi) { const m = (lo + hi) >> 1; if (times[m] < ts) lo = m + 1; else hi = m; }
-  const best = [times[lo], times[Math.max(0, lo - 1)]].sort((a, b) => Math.abs(a - ts) - Math.abs(b - ts))[0];
-  return t.timeToCoordinate(best);
-}
-/** Rayon d'une bulle pour une taille donnée, en 4 classes discrètes (lisibilité). */
-function flowRadius(v, max) {
-  const k = v / (max || 1);
-  if (k >= 0.55) return FLOW_RADIUS[3];
-  if (k >= 0.16) return FLOW_RADIUS[2];
-  if (k >= 0.045) return FLOW_RADIUS[1];
-  return FLOW_RADIUS[0];
+function queueFlow() {
+  if (state.flowQueued) return;
+  state.flowQueued = true;
+  requestAnimationFrame(() => {
+    state.flowQueued = false;
+    flowRender();
+    drawDeltaBand();
+  });
 }
 
-/**
- * Cellules gros prints / absorptions.
- *
- * Maillage fin (temps × prix) dimensionné sur l'écran : les cellules d'une même
- * colonne sont ensuite **réparties en éventail vertical**, chacune reliée à son
- * vrai prix par un fin trait de rappel — c'est la seule façon de garder le prix
- * exact ET de rendre lisible une salve de prints au même endroit.
- */
-function flowClusters() {
-  const c = state.candles, ts = state.chart && state.chart.timeScale();
-  if (!c || !ts) return { cells: [], max: 1, classes: [0, 0, 0] };
-  const bs = ts.options().barSpacing || 4;
-  const barSecs = state.barsDaily ? 86400 : (PERIOD[state.interval] || 300);
-  const quantum = Math.max(barSecs, barSecs * Math.round(26 / bs));   // ≥ 26 px entre colonnes
-  const y0 = c.coordinateToPrice(0), y1 = c.coordinateToPrice(1);
-  const perPx = (y0 != null && y1 != null) ? Math.abs(y0 - y1) : 0;
-  const rowStep = perPx > 0 ? perPx * 26 : 0;                          // ~26 px par rangée
-  const map = new Map();
-  const grab = (tsSec, price) => {
-    const tb = Math.floor(tsSec / quantum) * quantum;
-    const pb = rowStep > 0 ? Math.round(price / rowStep) : 0;
-    const key = tb + "|" + pb;
-    let cu = map.get(key);
-    if (!cu) {
-      cu = { key, t: tb, size: 0, buy: 0, sell: 0, n: 0, absN: 0, absBuy: 0, absSell: 0,
-             pMin: price, pMax: price, ts: tsSec, lastTs: tsSec, vw: 0 };
-      map.set(key, cu);
-    }
-    return cu;
+const absorptionStyle = Object.assign(
+  { mode: "border", buy: "#3b82f6", sell: "#facc15", mixed: "#c084fc", opacity: 0.9 },
+  storedJSON("gex.absorption", {}),
+);
+for (const side of ["buy", "sell", "mixed"])
+  if (!/^#[0-9a-f]{6}$/i.test(absorptionStyle[side]))
+    absorptionStyle[side] = { buy: "#3b82f6", sell: "#facc15", mixed: "#c084fc" }[side];
+if (!["border", "body", "marker"].includes(absorptionStyle.mode)) absorptionStyle.mode = "border";
+absorptionStyle.opacity = Math.max(0.2, Math.min(1, Number(absorptionStyle.opacity) || 0.9));
+for (const name of ["buy", "sell", "mixed", "mode", "opacity"]) {
+  const input = $("abs-" + name);
+  input.value = absorptionStyle[name];
+  input.addEventListener("input", () => {
+    absorptionStyle[name] = name === "opacity" ? Number(input.value) : input.value;
+    localStorage.setItem("gex.absorption", JSON.stringify(absorptionStyle));
+    recolorFlowCandles();
+    queueFlow();
+  });
+}
+$("flow-read").addEventListener("click", () => {
+  if (!state.chart || !state.bars.size) return;
+  const range = state.chart.timeScale().getVisibleLogicalRange();
+  const width = $("flow-canvas").clientWidth - state.chart.priceScale("right").width();
+  const count = Math.max(3, Math.floor(width / 86)),
+    center = range ? (range.from + range.to) / 2 : state.bars.size - count / 2;
+  state.chart.timeScale().setVisibleLogicalRange({ from: center - count / 2, to: center + count / 2 });
+  $("abs-settings").open = false;
+  queueFlow();
+});
+$("flow-overview").addEventListener("click", () => {
+  smartZoom();
+  $("abs-settings").open = false;
+  queueFlow();
+});
+function flowBarKey(t) {
+  return state.barsDaily ? new Date(t * 1000).toISOString().slice(0, 10) : t;
+}
+function flowBarOffset() {
+  return state.interval==="1h"&&Number(state.histArr?.[0]?.time)%3600===1800?1800:0;
+}
+function flowContext() {
+  return `${state.symbol}|${state.interval}|${flowSrc}|${flowBarOffset()}`;
+}
+function absorptionColor(b) {
+  return b?.abs_buy > 0 && b?.abs_sell > 0
+    ? absorptionStyle.mixed
+    : b?.abs_buy > 0
+      ? absorptionStyle.buy
+      : b?.abs_sell > 0
+        ? absorptionStyle.sell
+        : null;
+}
+function flowMarkerRows() {
+  return state.flowBarsContext === flowContext() ? state.flowBars : [];
+}
+function decorateFlowBar(bar) {
+  const b = flowMarkerRows().find((r) => flowBarKey(r.t) === bar.time),
+    color = absorptionColor(b);
+  const out = {
+    ...bar,
+    color: bar.close >= bar.open ? state.colors.up : state.colors.down,
+    borderColor: bar.close >= bar.open ? state.colors.up : state.colors.down,
+    wickColor: (bar.close >= bar.open ? state.colors.up : state.colors.down) + "bf",
   };
-  for (const b of state.flowBig) {
-    const cu = grab(b.ts, b.price);
-    cu.size += b.size; cu.n += 1; cu.vw += b.price * b.size;
-    if (b.side === "buy") cu.buy += b.size; else cu.sell += b.size;
-    cu.pMin = Math.min(cu.pMin, b.price); cu.pMax = Math.max(cu.pMax, b.price);
-    cu.ts = Math.min(cu.ts, b.ts); cu.lastTs = Math.max(cu.lastTs, b.ts);
+  if (color && absorptionStyle.mode !== "marker") {
+    out.borderColor = hexA(color, absorptionStyle.opacity);
+    out.wickColor = hexA(color, absorptionStyle.opacity);
+    if (absorptionStyle.mode === "body") out.color = hexA(color, absorptionStyle.opacity);
   }
-  for (const a of state.flowAbsorb) {
-    const cu = grab(a.ts, a.price);
-    cu.absN += 1;
-    if (a.side === "buy") cu.absBuy += a.volume; else cu.absSell += a.volume;
-    cu.size += a.volume * 0.25;              // pèse dans la taille sans écraser
-    cu.vw += a.price * a.volume * 0.25;
-    cu.pMin = Math.min(cu.pMin, a.price); cu.pMax = Math.max(cu.pMax, a.price);
-    cu.ts = Math.min(cu.ts, a.ts); cu.lastTs = Math.max(cu.lastTs, a.ts);
-  }
-  const cells = [...map.values()];
-  if (!cells.length) return { cells: [], max: 1, classes: [0, 0, 0] };
-  const max = Math.max(...cells.map((x) => x.size));
-  const classes = [max * 0.55, max * 0.16, max * 0.045];
-
-  // placement : x = centre de la colonne, y true = prix moyen pondéré
-  const W = document.getElementById("flow-canvas").clientWidth;
-  const H = document.getElementById("flow-canvas").clientHeight;
-  const visible = [];
-  for (const cu of cells) {
-    cu.p = cu.size > 0 ? cu.vw / cu.size : cu.pMin;
-    const x0 = flowX(cu.t + quantum / 2);
-    const y = c.priceToCoordinate(cu.p);
-    if (x0 == null || y == null || x0 < -20 || x0 > W + 20 || y < -20 || y > H + 20) continue;
-    cu.x = x0; cu.yTrue = y; cu.y = y; cu.r = flowRadius(cu.size, max);
-    cu.side = cu.buy >= cu.sell * 1.6 ? "buy" : cu.sell >= cu.buy * 1.6 ? "sell" : "mixed";
-    visible.push(cu);
-  }
-  // éventail : dans une même colonne (x à ±20 px), on écarte les bulles en y
-  visible.sort((a, b) => a.x - b.x || a.yTrue - b.yTrue);
-  for (let i = 0; i < visible.length;) {
-    let j = i + 1;
-    while (j < visible.length && visible[j].x - visible[i].x <= 20) j++;
-    const col = visible.slice(i, j);
-    if (col.length > 1) {
-      const step = 2 * Math.max(...col.map((k) => k.r)) + 4;
-      const mid = col.reduce((s, k) => s + k.yTrue, 0) / col.length;
-      const total = (col.length - 1) / 2;
-      for (let k = 0; k < col.length; k++) {
-        col[k].y = mid + (k - total) * step * 0.62;
-        col[k].fanned = Math.abs(col[k].y - col[k].yTrue) > 2;
-      }
-      // on serre l'éventail pour rester dans le cadre
-      const lo = Math.min(...col.map((k) => k.y - k.r)), hi = Math.max(...col.map((k) => k.y + k.r));
-      if (lo < 4) { const d = 4 - lo; col.forEach((k) => { k.y += d; }); }
-      if (hi > H - 4) { const d = hi - (H - 4); col.forEach((k) => { k.y -= d; }); }
-    }
-    i = j;
-  }
-  const kept = visible.sort((a, b) => b.size - a.size).slice(0, FLOW_MAX_BUBBLES).sort((a, b) => a.size - b.size);
-  return { cells: kept, max, classes };
+  return out;
 }
-
+function recolorFlowCandles() {
+  if (!state.candles || !state.bars.size) return;
+  const bars = [...state.bars.values()].sort((a, b) =>
+    String(a.time).localeCompare(String(b.time), undefined, { numeric: true }),
+  );
+  state.candles.setData(bars.map(decorateFlowBar));
+}
+function flowClusters() {
+  const cells = [];
+  const cv = $("flow-canvas");
+  if (!state.chart || !state.candles) return { cells, max: 1, classes: [] };
+  for (const b of flowMarkerRows()) {
+    if (!b.big_n && !b.abs_n) continue;
+    const key = flowBarKey(b.t),
+      bar = state.bars.get(key) || state.bars.get(String(key));
+    if (!bar) continue; // Never pin unavailable historical events to the latest candle.
+    const x = state.chart.timeScale().timeToCoordinate(key);
+    if (x == null || x < 0 || x > cv.clientWidth) continue;
+    const y = state.candles.priceToCoordinate(bar.high),
+      low = state.candles.priceToCoordinate(bar.low);
+    if (y == null || low == null) continue;
+    cells.push({
+      t: b.t,
+      x,
+      y: Math.max(65, y - 23),
+      absY: Math.min(cv.clientHeight * 0.72, low + 22),
+      size: b.big_total || 0,
+      buy: b.big_buy || 0,
+      sell: b.big_sell || 0,
+      unknown: b.big_unknown || 0,
+      n: b.big_n || 0,
+      absN: b.abs_n || 0,
+      absBuy: b.abs_buy || 0,
+      absSell: b.abs_sell || 0,
+      ts: b.t,
+      lastTs: b.t + (PERIOD[state.interval] || 300),
+      pMin: bar.low,
+      pMax: bar.high,
+      side:
+        b.big_buy > 0 && b.big_sell > 0
+          ? "mixed"
+          : b.big_buy > b.big_sell
+            ? "buy"
+            : b.big_sell > b.big_buy
+              ? "sell"
+              : "unknown",
+      absColor: absorptionColor(b),
+    });
+  }
+  return { cells, max: Math.max(1, ...cells.map((c) => c.size)), classes: [] };
+}
 function flowRender() {
   const cv = $("flow-canvas");
   if (!cv || !state.chart || !state.candles) return;
-  const W = cv.clientWidth, H = cv.clientHeight;
+  const W = cv.clientWidth,
+    H = cv.clientHeight,
+    dpr = devicePixelRatio || 1;
   if (!W || !H) return;
-  const dpr = window.devicePixelRatio || 1;
   if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
-    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    cv.width = Math.round(W * dpr);
+    cv.height = Math.round(H * dpr);
   }
   const ctx = cv.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
   state.flowHits = [];
   if (!state.bubbles) return;
-  const plotR = W - (state.chart.priceScale("right").width() || 0);
-  const now = Date.now() / 1000;
-  const usd = state.flowUsd;
-  const amount = (v) => usd ? fmtUsd(v) : fmtQty(v);
-  const { cells, max, classes } = flowClusters();
-  let recent = false;
-
+  const { cells, max } = flowClusters(),
+    right = W - (state.chart.priceScale("right").width() || 70);
+  const spacing = state.chart.timeScale().options().barSpacing || 6;
+  const slot = Math.max(6, spacing - 2);
+  const amount = (v) => (state.flowBarsUnit === "USD" ? fmtUsd(v) : fmtQty(v));
+  ctx.font = "700 9px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
   for (const cu of cells) {
-    const x = cu.x, y = cu.y;
-    if (x < 0 || x > plotR || y < 0 || y > H) continue;
-    const r = cu.r;
-    const fade = Math.max(0.42, 1 - Math.max(0, now - cu.lastTs) / 5400);
-    const col = FLOW_COL[cu.side] || FLOW_COL.mixed;
-    if (now - cu.lastTs < 5) recent = true;
-
-    // halo bref sur une cellule fraîche (≈1 s de pulsation, sans boucle infinie)
-    if (now - cu.lastTs < 5) {
-      const k = 1 - ((now - cu.lastTs) % 1.2) / 1.2;
-      ctx.globalAlpha = 0.30 * k * fade;
+    if (cu.x > right) continue;
+    if (cu.n) {
+      const r = Math.min(slot / 2, 21, 11 + 10 * Math.sqrt(cu.size / max)),
+        col = FLOW_COL[cu.side];
+      ctx.globalAlpha = 0.85;
       ctx.fillStyle = col;
-      ctx.beginPath(); ctx.arc(x, y, r + 4 + 10 * (1 - k), 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cu.x, cu.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#081018";
+      ctx.fillText(amount(cu.size), cu.x, cu.y - 3, Math.max(4, r * 2 - 2));
+      ctx.font = "8px monospace";
+      ctx.fillText("×" + cu.n, cu.x, cu.y + 8, r * 2);
+      ctx.font = "700 9px monospace";
+      state.flowHits.push({ x: cu.x, y: cu.y, r, cell: cu });
     }
-
-    // trait de rappel : la bulle a été écartée pour la lisibilité, le prix réel reste tracé
-    if (cu.fanned) {
-      ctx.globalAlpha = 0.5 * fade;
-      ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.setLineDash([2, 2]);
-      ctx.beginPath(); ctx.moveTo(x + r + 2, y); ctx.lineTo(x + r + 2, cu.yTrue); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.beginPath(); ctx.arc(cu.x + 0.5, cu.yTrue, 1.4, 0, Math.PI * 2);
-      ctx.fillStyle = col; ctx.fill();
-    }
-    ctx.globalAlpha = 0.82 * fade;
-    const g = ctx.createRadialGradient(x - r * 0.32, y - r * 0.32, r * 0.12, x, y, r);
-    g.addColorStop(0, col); g.addColorStop(1, col + "55");
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = fade;
-    ctx.lineWidth = 1; ctx.strokeStyle = "rgba(6,9,14,.85)"; ctx.stroke();
-
-    if (r >= 12 && cu.n > 0) {
-      ctx.fillStyle = "#06121a";
-      ctx.font = `700 ${r >= 20 ? 10 : 8.5}px 'JetBrains Mono', monospace`;
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(amount(cu.size), x, y + 0.5);
-    }
-
-    // absorption : anneau violet (état de marché distinct du sens du tape)
     if (cu.absN) {
-      const ar = r + 3.5;
-      ctx.globalAlpha = 0.95 * fade;
-      ctx.strokeStyle = FLOW_COL.abs; ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
-      ctx.beginPath(); ctx.arc(x, y, ar, 0, Math.PI * 2); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = FLOW_COL.abs;
-      ctx.beginPath(); ctx.arc(x, y - ar, 2.6, 0, Math.PI * 2); ctx.fill();
+      const total = cu.absBuy + cu.absSell,
+        label = "A " + amount(total) + " ×" + cu.absN;
+      const width = Math.min(slot, 100, ctx.measureText(label).width + 10);
+      ctx.fillStyle = "#111820";
+      ctx.fillRect(cu.x - width / 2, cu.absY - 9, width, 18);
+      ctx.strokeStyle = cu.absColor || absorptionStyle.mixed;
+      ctx.strokeRect(cu.x - width / 2, cu.absY - 9, width, 18);
+      ctx.fillStyle = cu.absColor || absorptionStyle.mixed;
+      ctx.fillText(label, cu.x, cu.absY, Math.max(4, width - 4));
+      state.flowHits.push({ x: cu.x, y: cu.absY, r: 12, w: width, cell: cu });
     }
-
-    // badge ×N : plusieurs prints dans la même cellule
-    if (cu.n > 1) {
-      const bx = x + r * 0.72, by = y - r * 0.72;
-      const txt = "×" + (cu.n + cu.absN > 99 ? "99" : cu.n);
-      ctx.font = "700 8.5px 'JetBrains Mono', monospace";
-      const bw = ctx.measureText(txt).width + 7;
-      ctx.globalAlpha = 0.92 * fade;
-      ctx.fillStyle = "rgba(9,13,20,.92)";
-      ctx.beginPath(); ctx.roundRect(bx - bw / 2, by - 7, bw, 14, 7); ctx.fill();
-      ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.stroke();
-      ctx.fillStyle = col; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(txt, bx, by + 0.5);
-    }
-    state.flowHits.push({ x, y, r: r + (cu.absN ? 4 : 1), cell: cu });
   }
-  ctx.globalAlpha = 1;
-
-  // légende des classes (seuils calculés sur la vue courante)
   const lg = $("flow-legend");
-  if (lg && !lg.hidden) {
-    const cls = [[FLOW_RADIUS[3], max], [FLOW_RADIUS[2], classes[0]], [FLOW_RADIUS[1], classes[1]]];
-    lg.innerHTML = cls.map(([r, v]) =>
-      `<span><i style="width:${r}px;height:${r}px"></i>≥&nbsp;${usd ? fmtUsd(v) : fmtQty(v)}</span>`).join("") +
-      `<span><i class="abs"></i>${CRYPTO.has(state.symbol) && flowSrc === "options" ? "activité options / index stable" : "absorption estimée"}</span><span class="xl">×N&nbsp;prints</span>`;
-  }
-  // une cellule fraîche doit continuer à pulser : on se réarme brièvement
-  if (recent) setTimeout(queueFlow, 260);
+  if (lg && !lg.hidden)
+    lg.textContent =
+      "Par bougie : gros = montant × prints · A = absorption estimée, montant × épisodes · max. 420 bougies reçues, sans backfill." +
+      (spacing < 65 ? " Zoom de lecture dans « Flux · couleurs / lecture »." : "") +
+      (state.flowCoverageStart
+        ? " Début conservé : " +
+          new Date(state.flowCoverageStart * 1000).toLocaleString("fr-FR") +
+          " (lacunes possibles)."
+        : "");
 }
 
 // infobulle au survol : le canvas de bulles est en pointer-events:none, on écoute donc le conteneur et on teste les cercles dessinés
@@ -1146,26 +1143,27 @@ function flowRender() {
     let hit = null;
     for (let i = state.flowHits.length - 1; i >= 0; i--) {
       const h = state.flowHits[i];
-      if (Math.hypot(h.x - x, h.y - y) <= h.r + 2) { hit = h; break; }
+      if (h.w ? Math.abs(h.x-x)<=h.w/2+2&&Math.abs(h.y-y)<=11 : Math.hypot(h.x - x, h.y - y) <= h.r + 2) { hit = h; break; }
     }
     if (!hit) { tip.hidden = true; return; }
     const cu = hit.cell;
-    const usd = state.flowUsd;
+    const usd = state.flowBarsUnit==="USD";
     const amt = (v) => usd ? fmtUsd(v) : fmtQty(v) + " contrats";
     const t1 = new Date(cu.ts * 1000).toLocaleTimeString("fr-FR", { hour12: false });
     const t2 = new Date(cu.lastTs * 1000).toLocaleTimeString("fr-FR", { hour12: false });
-    const total = cu.buy + cu.sell;
+    const total = cu.buy + cu.sell + (cu.unknown||0);
     const col = FLOW_COL[cu.side] || "#fff";
-    const head = cu.side === "mixed" ? "ACHATS / VENTES" : cu.side === "buy" ? "DOMINANTE ACHAT" : "DOMINANTE VENTE";
-    const range = cu.pMin === cu.pMax ? fmtFlowPx(cu.p) : `${fmtFlowPx(cu.pMin)} – ${fmtFlowPx(cu.pMax)}`;
-    let html = `<b style="color:${col}">${cu.n > 1 ? cu.n + " GROS PRINTS" : "GROS PRINT"} · ${head}</b><br>` +
-      `${amt(cu.size - (cu.absBuy + cu.absSell) * 0.25)}` +
+    const head = cu.side === "unknown" ? "SENS INCONNU" : cu.side === "mixed" ? "ACHATS / VENTES" : cu.side === "buy" ? "DOMINANTE ACHAT" : "DOMINANTE VENTE";
+    const range = cu.pMin === cu.pMax ? fmtFlowPx(cu.pMin) : `${fmtFlowPx(cu.pMin)} – ${fmtFlowPx(cu.pMax)}`;
+    let html = `<b style="color:${col}">${cu.n} GROS PRINTS · ${head}</b><br>` +
+      `${amt(cu.size)}` +
       (total ? ` · achats ${amt(cu.buy)} / ventes ${amt(cu.sell)}` : "") + `<br>${range} · ${t1}${cu.n > 1 || cu.absN ? "–" + t2 : ""}`;
     if (cu.absN) {
-      const lbl = cu.absBuy >= cu.absSell ? "ACHATS ABSORBÉS" : "VENTES ABSORBÉES";
-      html += `<br><b style="color:${FLOW_COL.abs}">◌ ${lbl}</b> ${amt(Math.max(cu.absBuy, cu.absSell))}` +
-              (cu.absN > 1 ? ` ×${cu.absN}` : "");
+      const lbl = cu.absBuy>0&&cu.absSell>0?"ABSORPTION MIXTE ESTIMÉE":cu.absBuy>0?"ACHETEURS AGRESSIFS ABSORBÉS (estimé)":"VENDEURS AGRESSIFS ABSORBÉS (estimé)";
+      html += `<br><b style="color:${cu.absColor||absorptionStyle.mixed}">◌ ${lbl}</b> ${amt(cu.absBuy+cu.absSell)}` +
+              ` ×${cu.absN} épisodes · acheteurs ${amt(cu.absBuy)} / vendeurs ${amt(cu.absSell)}<br>Fenêtres estimées attribuées à la bougie de détection ; pas de preuve du carnet.`;
     }
+    html+=`<br>Delta gros prints ${amt(cu.buy-cu.sell)} · sens inconnu ${amt(cu.unknown||0)}<br>${CRYPTO.has(state.symbol)?flowSrc==="options"?"Prime options USD · repère sur index, pas un prix d’exécution":"Notionnel perp USD":"Contrats du sous-jacent · repère OHLC du graphique"}`;
     tip.innerHTML = html;
     tip.style.left = Math.min(hit.x + 12, area.clientWidth - tip.offsetWidth - 8) + "px";
     tip.style.top = Math.max(4, hit.y - tip.offsetHeight - 10) + "px";
@@ -1179,24 +1177,27 @@ setBubbles(state.bubbles);
 /* ---------------- bande delta / CVD sous le chart ---------------- */
 let flowBarsPoll = null, flowBarsSeq = 0;
 async function loadFlowBars() {
-  const iv = state.interval, seq = ++flowBarsSeq;
+  const iv = state.interval, sym=state.symbol, source=flowSrc, offset=flowBarOffset(), seq = ++flowBarsSeq;
   const q = CRYPTO.has(state.symbol) && flowSrc !== "perp" ? `&src=${flowSrc}` : "";
   try {
-    const r = await fetch(`/api/flow/${state.symbol}/bars?interval=${iv}&limit=300${q}`);
+    const r = await fetch(`/api/flow/${state.symbol}/bars?interval=${iv}&limit=420&offset=${offset}${q}`);
+    if(!r.ok)throw new Error("flow history unavailable");
     const j = await r.json();
-    if (seq !== flowBarsSeq) return;
+    if (seq !== flowBarsSeq || sym!==state.symbol || iv!==state.interval || source!==flowSrc || offset!==flowBarOffset()) return;
     state.flowBars = j.bars || [];
+    state.flowBarsContext=flowContext();
+    state.flowCoverageStart=j.retained_from;
     state.flowBarsUnit = j.unit || "contrats";
-    queueFlow();
+    recolorFlowCandles();queueFlow();
   } catch { /* tape indisponible : la bande reste vide */ }
 }
-function startFlowBarsPoll() { stopFlowBarsPoll(); loadFlowBars(); flowBarsPoll = setInterval(loadFlowBars, 15000); }
+function startFlowBarsPoll() { stopFlowBarsPoll(); loadFlowBars(); flowBarsPoll = setInterval(loadFlowBars, 2500); }
 function stopFlowBarsPoll() { if (flowBarsPoll) { clearInterval(flowBarsPoll); flowBarsPoll = null; } }
 
 function drawDeltaBand() {
   const cv = $("delta-canvas"), lg = $("delta-legend");
   if (!cv || !state.chart || !state.candles) return;
-  const bars0 = (state.flowBars || []).filter((b) => b && b.t != null);
+  const bars0 = flowMarkerRows().filter((b) => b && b.t != null);
   // pas de tape : la bande disparaît (le panneau FLUX explique l'absence)
   if (!bars0.length) { cv.hidden = true; if (lg) lg.hidden = true; return; }
   cv.hidden = false;
@@ -1522,7 +1523,7 @@ function drawTerm(rows) {
 
 /* --------- E : règles d'alerte personnelles --------- */
 const RULE_KINDS = { cross: "Franchit", near: "Approche ≤", regime: "Régime γ" };
-const RULE_LEVELS = { cw1: "CW1", pw1: "PW1", flip: "FLIP", pain: "MAX PAIN", vwap: "VWAP", price: "Prix fixe" };
+const RULE_LEVELS = { cw1: "Call Wall 1", pw1: "Put Wall 1", flip: "Zero Gamma", pain: "MAX PAIN", vwap: "VWAP", price: "Prix fixe" };
 const rules = {
   list: storedJSON("gex.rules", []),
   log: storedJSON("gex.rlog", []),
@@ -1555,7 +1556,7 @@ function renderRules() {
   list.innerHTML = rules.list.length
     ? rules.list.map((r) => `<div class="rule-row" data-id="${r.id}"><span class="rk">${RULE_KINDS[r.kind] || r.kind}</span>` +
         `<span class="rt">${ruleLabel(r)}</span><button class="rm" title="Supprimer">✕</button></div>`).join("")
-    : '<div class="alerts-empty muted">Aucune règle — ex. « franchit FLIP », « approche ≤ 20 bps de CW1 », « régime γ devient SHORT ».</div>';
+    : '<div class="alerts-empty muted">Aucune règle — ex. « franchit Zero Gamma », « approche ≤ 20 bps de Call Wall 1 », « régime γ devient SHORT ».</div>';
   const log = $("rules-log");
   log.innerHTML = rules.log.length
     ? rules.log.map((l) => `<div class="rlog-row"><span class="t">${l.t}</span><span class="m">${l.m}</span><span class="p">${l.p}</span></div>`).join("")
@@ -1647,9 +1648,9 @@ function renderReaction() {
   const tab = $("react-table");
   if (!tab) return;
   const lvls = [
-    { n: "CW1", px: W.call && W.call[0] ? W.call[0].strike : null, c: WALL_C },
-    { n: "PW1", px: W.put && W.put[0] ? W.put[0].strike : null, c: WALL_P },
-    { n: "FLIP", px: L.gamma_flip ?? L.zero_gex ?? null, c: FLIP_C },
+    { n: "Call Wall 1", px: W.call && W.call[0] ? W.call[0].strike : null, c: WALL_C },
+    { n: "Put Wall 1", px: W.put && W.put[0] ? W.put[0].strike : null, c: WALL_P },
+    { n: "Zero Gamma", px: L.gamma_flip ?? L.zero_gex ?? null, c: FLIP_C },
     { n: "PAIN", px: L.max_pain ?? null, c: PAIN_C },
     { n: "VWAP", px: state.sess ? state.sess.vwapLast : null, c: "#8492a6" },
   ].filter((l) => l.px > 0);
@@ -1710,9 +1711,9 @@ function updateHud(param) {
     `<div class="hrow"><span>STRIKE</span><b>${fmtPx(P.strikes[bi], state.symbol)}</b></div>` +
     `<div class="hrow"><span>γ NET</span><b class="${P.net_gex[bi] >= 0 ? "green" : "red"}">${fmtUSD(P.net_gex[bi])}</b></div>` +
     `<div class="hrow"><span>OI C / P</span><b>${fmtOI(P.call_oi[bi])} / ${fmtOI(P.put_oi[bi])}</b></div>` +
-    `<div class="hrow"><span>→ CW1</span><b>${bps(W.call && W.call[0] && W.call[0].strike)} bps</b></div>` +
-    `<div class="hrow"><span>→ PW1</span><b>${bps(W.put && W.put[0] && W.put[0].strike)} bps</b></div>` +
-    `<div class="hrow"><span>→ FLIP</span><b>${bps(L.gamma_flip ?? L.zero_gex)} bps</b></div>`;
+    `<div class="hrow"><span>→ Call Wall 1</span><b>${bps(W.call && W.call[0] && W.call[0].strike)} bps</b></div>` +
+    `<div class="hrow"><span>→ Put Wall 1</span><b>${bps(W.put && W.put[0] && W.put[0].strike)} bps</b></div>` +
+    `<div class="hrow"><span>→ Zero Gamma</span><b>${bps(L.gamma_flip ?? L.zero_gex)} bps</b></div>`;
   document.querySelectorAll("#ladder .ld-row.xh").forEach((n) => n.classList.remove("xh"));
   const row = document.querySelector(`#ladder .ld-row[data-k="${P.strikes[bi]}"]`);
   if (row) row.classList.add("xh");
@@ -1725,10 +1726,10 @@ function renderRail() {
   const L = state.levels || {}, W = L.walls || {};
   const it = [];
   it.push(`<div class="rl"><span>SPOT</span><b>${L.spot != null ? fmtPx(L.spot, state.symbol) : "—"}</b></div>`);
-  if (W.call && W.call[0]) it.push(`<div class="rl" style="color:var(--green)"><span>CW1</span><b>${fmtPx(W.call[0].strike, state.symbol)}</b></div>`);
-  if (W.put && W.put[0]) it.push(`<div class="rl" style="color:var(--red)"><span>PW1</span><b>${fmtPx(W.put[0].strike, state.symbol)}</b></div>`);
+  if (W.call && W.call[0]) it.push(`<div class="rl" style="color:var(--green)"><span>Call Wall 1</span><b>${fmtPx(W.call[0].strike, state.symbol)}</b></div>`);
+  if (W.put && W.put[0]) it.push(`<div class="rl" style="color:var(--red)"><span>Put Wall 1</span><b>${fmtPx(W.put[0].strike, state.symbol)}</b></div>`);
   const flip = L.gamma_flip ?? L.zero_gex;
-  if (flip != null) it.push(`<div class="rl" style="color:var(--yellow)"><span>FLIP</span><b>${fmtPx(flip, state.symbol)}</b></div>`);
+  if (flip != null) it.push(`<div class="rl" style="color:var(--yellow)"><span>Zero Gamma</span><b>${fmtPx(flip, state.symbol)}</b></div>`);
   if (L.net_gex_total != null) it.push(`<div class="rl"><span>Γ NET</span><b>${fmtUSD(L.net_gex_total)}</b></div>`);
   r.innerHTML = it.join("");
 }
@@ -1947,10 +1948,10 @@ function renderTape(force) {
   }
   if (L.net_gex_total != null) it.push(`<span>Γ NET <b class="${L.regime === "long_gamma" ? "green" : "red"}">${fmtUSD(L.net_gex_total)}</b> ${L.regime === "long_gamma" ? "LONG" : "SHORT"} GAMMA</span>`);
   const flip = L.gamma_flip ?? L.zero_gex;
-  if (flip != null && L.spot) it.push(`<span>FLIP <b>${fmtPrice(flip)}</b> · ${Math.round((flip / L.spot - 1) * 10000)} bps</span>`);
+  if (flip != null && L.spot) it.push(`<span>Zero Gamma <b>${fmtPrice(flip)}</b> · ${Math.round((flip / L.spot - 1) * 10000)} bps</span>`);
   const W = L.walls || {};
-  if (W.call && W.call[0]) it.push(`<span>CW1 <b class="green">${fmtPrice(W.call[0].strike)}</b></span>`);
-  if (W.put && W.put[0]) it.push(`<span>PW1 <b class="red">${fmtPrice(W.put[0].strike)}</b></span>`);
+  if (W.call && W.call[0]) it.push(`<span>Call Wall 1 <b class="green">${fmtPrice(W.call[0].strike)}</b></span>`);
+  if (W.put && W.put[0]) it.push(`<span>Put Wall 1 <b class="red">${fmtPrice(W.put[0].strike)}</b></span>`);
   if (state.sess && state.sess.vwapLast) it.push(`<span>VWAP <b>${fmtPrice(state.sess.vwapLast)}</b></span>`);
   if (state.meta && state.meta.chain_ts) it.push(`<span>CHAÎNE <b>${String(state.meta.chain_ts).slice(11, 16)} ET</b></span>`);
   it.push(`<span>${CRYPTO.has(state.symbol) ? "Deribit options + tape temps réel" : "CBOE delayed 15-min · Yahoo"} · <b>${($("mode-label") || {}).textContent || "SIM"}</b></span>`);
@@ -2201,9 +2202,9 @@ function drawGamma() {
   const CH = 15, GAP = 1, chipW = Math.max(60, axisW - 4);
   const chips = [];
   const xc = state.crossCounts || {};
-  if (T.cw) Ws.call.slice(0, 3).forEach((e, i) => chips.push({ y0: state.candles.priceToCoordinate(e.strike), bg: i ? hexA(WALL_C, .82) : WALL_C, txt: `CW${i + 1} ${fmtPrice(e.strike)} | ${fmtUSD(e.gex)}${i === 0 && xc.cw ? " ×" + xc.cw : ""}` }));
-  if (T.pw) Ws.put.slice(0, 3).forEach((e, i) => chips.push({ y0: state.candles.priceToCoordinate(e.strike), bg: i ? hexA(WALL_P, .82) : WALL_P, txt: `PW${i + 1} ${fmtPrice(e.strike)} | ${fmtUSD(e.gex)}${i === 0 && xc.pw ? " ×" + xc.pw : ""}` }));
-  if (T.flip && flip != null) chips.push({ y0: state.candles.priceToCoordinate(flip), bg: FLIP_C, txt: `FLIP ${fmtPrice(flip)}` });
+  if (T.cw) Ws.call.slice(0, 3).forEach((e, i) => chips.push({ y0: state.candles.priceToCoordinate(e.strike), bg: i ? hexA(WALL_C, .82) : WALL_C, txt: `Call Wall ${i + 1} ${fmtPrice(e.strike)} | ${fmtUSD(e.gex)}${i === 0 && xc.cw ? " ×" + xc.cw : ""}` }));
+  if (T.pw) Ws.put.slice(0, 3).forEach((e, i) => chips.push({ y0: state.candles.priceToCoordinate(e.strike), bg: i ? hexA(WALL_P, .82) : WALL_P, txt: `Put Wall ${i + 1} ${fmtPrice(e.strike)} | ${fmtUSD(e.gex)}${i === 0 && xc.pw ? " ×" + xc.pw : ""}` }));
+  if (T.flip && flip != null) chips.push({ y0: state.candles.priceToCoordinate(flip), bg: FLIP_C, txt: `Zero Gamma ${fmtPrice(flip)}` });
   if (T.pain && L.max_pain != null) chips.push({ y0: state.candles.priceToCoordinate(L.max_pain), bg: hexA(PAIN_C, .8), txt: `PAIN ${fmtPrice(L.max_pain)}` });
   const tsH = typeof state.chart.timeScale().height === "function" ? state.chart.timeScale().height() : 28;
   const yMax = H - tsH - 2;          // jamais de chip sur l'axe du temps
@@ -2223,7 +2224,7 @@ function drawGamma() {
   ctx.font = "700 9px 'JetBrains Mono', monospace";
   for (const c of vis) {
     if (c.y < 2) continue;
-    const w = chipW;
+    const w = Math.min(W-12,Math.max(chipW,ctx.measureText(c.txt).width+12)), chipX=W-w-3;
     if (Math.abs(c.y - c.y0) > 1) {           // rappel discret vers le strike réel
       ctx.strokeStyle = "rgba(255,255,255,.22)"; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(plotR + 1, c.y0 + .5); ctx.lineTo(plotR + 5, c.y + .5); ctx.stroke();
@@ -2234,12 +2235,12 @@ function drawGamma() {
     ctx.fillRect(plotR + 1, c.y - 8, axisW - 1, CH);
     ctx.fillStyle = c.bg;
     ctx.beginPath();
-    ctx.roundRect(plotR + 1.5, c.y - 8, w, CH, 3);
+    ctx.roundRect(chipX, c.y - 8, w, CH, 3);
     ctx.fill();
     ctx.fillStyle = "#0b0e14";
     ctx.save();
-    ctx.beginPath(); ctx.rect(plotR + 1.5, c.y - 8, w, CH); ctx.clip();
-    ctx.fillText(c.txt, plotR + 6, c.y + 3);
+    ctx.beginPath(); ctx.rect(chipX, c.y - 8, w, CH); ctx.clip();
+    ctx.fillText(c.txt, chipX + 5, c.y + 3);
     ctx.restore();
   }
 
@@ -2259,9 +2260,9 @@ function drawGamma() {
     ctx.fillStyle = "#0b0e14";
     ctx.fillText(txt, plotR - w - 3, yy + 13);
   };
-  if (T.cw && Ws.call[0]) chip(Ws.call[0].strike, WALL_C, "CW1");
-  if (T.pw && Ws.put[0]) chip(Ws.put[0].strike, WALL_P, "PW1");
-  if (T.flip && flip != null) chip(flip, FLIP_C, "FLIP");
+  if (T.cw && Ws.call[0]) chip(Ws.call[0].strike, WALL_C, "Call Wall 1");
+  if (T.pw && Ws.put[0]) chip(Ws.put[0].strike, WALL_P, "Put Wall 1");
+  if (T.flip && flip != null) chip(flip, FLIP_C, "Zero Gamma");
 
   // pulses d'alerte (anneaux expansifs)
   if (state.pulses && state.pulses.length) {
@@ -2325,8 +2326,8 @@ async function runScenario() {
 
 function drawScenLines(j) {
   const defs = [
-    ["sc_cw", j.call_wall, "#ffa502", "CW SCÉN"],
-    ["sc_pw", j.put_wall, "#ffa502", "PW SCÉN"],
+    ["sc_cw", j.call_wall, "#ffa502", "Call Wall scénario"],
+    ["sc_pw", j.put_wall, "#ffa502", "Put Wall scénario"],
     ["sc_zg", j.zero_gex, "#ff7f50", "ZG SCÉN"],
   ];
   for (const [key, price, color, title] of defs) {
@@ -2608,7 +2609,7 @@ async function switchSymbol(sym) {
   state.bars = new Map();          // plus aucune barre de l'autre instrument
   state.levels = {};
   state.flowBig = []; state.flowAbsorb = []; state.flowHits = [];
-  state.flowBars = []; flowAbsSeq = 0; flowBigSeq = 0;
+  state.flowBars = [];state.flowBarsContext=null;state.flowCoverageStart=null; flowAbsSeq = 0; flowBigSeq = 0;
   stopFlowBarsPoll();
   await loadSymbol();
   refreshTabs();
@@ -2881,7 +2882,7 @@ function applyCandleColors(save = true) {
   });
   document.querySelectorAll("#candle-presets button").forEach((b) =>
     b.classList.toggle("active", b.dataset.up === state.colors.up && b.dataset.down === state.colors.down));
-  refreshTabs(); drawHeroSpark();
+  recolorFlowCandles();refreshTabs(); drawHeroSpark();
 }
 $("ap-up").addEventListener("input", (e) => { state.colors.up = e.target.value; applyCandleColors(); });
 $("ap-down").addEventListener("input", (e) => { state.colors.down = e.target.value; applyCandleColors(); });
@@ -3016,7 +3017,7 @@ $("cmdk").addEventListener("click", (e) => { if (e.target === $("cmdk")) cmdkClo
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); cmdk.open ? cmdkClose() : cmdkOpen(); }
   if (e.key === "Escape" && cmdk.open) cmdkClose();
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && draw.shapes.length && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) { e.preventDefault(); draw.shapes.pop(); draw.sel = -1; drawSave(); queueDraw(); }
+  if ((e.ctrlKey || e.metaKey) && ["z","y"].includes(e.key.toLowerCase()) && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) { e.preventDefault();drawUndo(e.shiftKey||e.key.toLowerCase()==="y"); }
 });
 
 /* ---------------- skeletons ---------------- */
@@ -3055,87 +3056,269 @@ $("tour-skip").addEventListener("click", endTour);
 function endTour() { $("tour").hidden = true; localStorage.setItem("gex.tour", "1"); }
 
 /* ---------------- outils de dessin ---------------- */
-const draw = { tool: "none", shapes: [], sel: -1, draft: null, drag: null, queued: false };
-function drawLoad() { try { draw.shapes = JSON.parse(localStorage.getItem("gex.draw." + state.symbol)) || []; } catch { draw.shapes = []; } draw.sel = -1; }
-function drawSave() { localStorage.setItem("gex.draw." + state.symbol, JSON.stringify(draw.shapes)); }
-function setDrawTool(t) {
-  draw.tool = t; draw.draft = null;
-  document.querySelectorAll("#draw-bar button[data-tool]").forEach((b) => b.classList.toggle("active", b.dataset.tool === t));
-  const cv = $("draw-canvas");
-  cv.className = t === "none" ? "idle" : (t === "cursor" ? "sel" : "drawing");
-  if (t !== "cursor") { draw.sel = -1; $("draw-opts").hidden = true; }
+const draw = {
+  tool: "none",
+  shapes: [],
+  sel: -1,
+  draft: null,
+  drag: null,
+  queued: false,
+  history: ["[]"],
+  future: [],
+};
+function drawLoad() {
+  const saved = storedJSON("gex.draw." + state.symbol, []);
+  draw.shapes = Array.isArray(saved)
+    ? saved.filter(
+        (sh) =>
+          sh &&
+          ["hline", "vline", "trend", "ray", "rect", "fib"].includes(sh.tool) &&
+          Array.isArray(sh.pts) &&
+          sh.pts.length > 0 &&
+          sh.pts.length <= 2 &&
+          sh.pts.every(
+            (p) => p && p.t != null && Number.isFinite(drawTimeValue(p.t)) && Number.isFinite(p.p),
+          ),
+      )
+    : [];
+  draw.history = [JSON.stringify(draw.shapes)];
+  draw.future = [];
+  draw.sel = -1;
+  draw.drag = null;
+  draw.draft = null;
+  drawOptsSync();
+  drawHistorySync();
+}
+function drawHistorySync() {
+  $("draw-undo").disabled = draw.history.length < 2;
+  $("draw-redo").disabled = !draw.future.length;
+}
+function drawSave(record = true) {
+  const json = JSON.stringify(draw.shapes);
+  if (record && json !== draw.history.at(-1)) {
+    draw.history.push(json);
+    draw.history = draw.history.slice(-101);
+    draw.future = [];
+  }
+  localStorage.setItem("gex.draw." + state.symbol, json);
+  drawHistorySync();
+}
+function drawUndo(redo = false) {
+  if (redo) {
+    if (!draw.future.length) return;
+    draw.history.push(draw.future.pop());
+  } else {
+    if (draw.history.length < 2) return;
+    draw.future.push(draw.history.pop());
+  }
+  draw.shapes = JSON.parse(draw.history.at(-1));
+  draw.sel = -1;
+  draw.draft = null;
+  draw.drag = null;
+  drawSave(false);
+  drawOptsSync();
   queueDraw();
 }
-document.querySelectorAll("#draw-bar button[data-tool]").forEach((b) =>
-  b.addEventListener("click", () => setDrawTool(b.dataset.tool)));
-$("draw-undo").addEventListener("click", () => { draw.shapes.pop(); draw.sel = -1; drawOptsSync(); drawSave(); queueDraw(); });
-$("draw-clear").addEventListener("click", () => { draw.shapes = []; draw.sel = -1; $("draw-opts").hidden = true; drawSave(); queueDraw(); });
+function setDrawTool(t) {
+  if (draw.drag) {
+    draw.drag = null;
+    drawSave();
+  }
+  draw.tool = t;
+  draw.draft = null;
+  document
+    .querySelectorAll("#draw-bar button[data-tool]")
+    .forEach((b) => b.classList.toggle("active", b.dataset.tool === t));
+  const cv = $("draw-canvas");
+  cv.className = t === "none" ? "idle" : t === "cursor" ? "sel" : "drawing";
+  if (t !== "cursor") {
+    draw.sel = -1;
+    $("draw-opts").hidden = true;
+  }
+  queueDraw();
+}
+document
+  .querySelectorAll("#draw-bar button[data-tool]")
+  .forEach((b) => b.addEventListener("click", () => setDrawTool(b.dataset.tool)));
+$("draw-undo").addEventListener("click", () => drawUndo());
+$("draw-redo").addEventListener("click", () => drawUndo(true));
+$("draw-clear").addEventListener("click", () => {
+  draw.shapes = draw.shapes.filter((s) => s.locked);
+  draw.sel = -1;
+  $("draw-opts").hidden = true;
+  drawSave();
+  queueDraw();
+});
 $("draw-del").addEventListener("click", () => drawDelete());
 $("draw-dup").addEventListener("click", () => drawDuplicate());
-$("draw-color").addEventListener("input", (e) => { if (draw.sel >= 0) { draw.shapes[draw.sel].color = e.target.value; drawSave(); queueDraw(); } });
-$("draw-width").addEventListener("change", (e) => { if (draw.sel >= 0) { draw.shapes[draw.sel].width = +e.target.value; drawSave(); queueDraw(); } });
+$("draw-color").addEventListener("input", (e) => {
+  if (draw.sel >= 0 && !draw.shapes[draw.sel].locked) {
+    draw.shapes[draw.sel].color = e.target.value;
+    drawSave();
+    queueDraw();
+  }
+});
+$("draw-width").addEventListener("change", (e) => {
+  if (draw.sel >= 0 && !draw.shapes[draw.sel].locked) {
+    draw.shapes[draw.sel].width = +e.target.value;
+    drawSave();
+    queueDraw();
+  }
+});
 $("draw-opacity").addEventListener("input", (e) => {
   const v = +e.target.value;
   $("draw-opacity-val").textContent = v + "%";
-  if (draw.sel >= 0) { draw.shapes[draw.sel].opacity = v / 100; drawSave(); queueDraw(); }
+  if (draw.sel >= 0 && !draw.shapes[draw.sel].locked) {
+    draw.shapes[draw.sel].opacity = v / 100;
+    drawSave();
+    queueDraw();
+  }
 });
 
+$("draw-lock").addEventListener("click", () => {
+  const sh = draw.shapes[draw.sel];
+  if (sh) {
+    sh.locked = !sh.locked;
+    drawSave();
+    drawOptsSync();
+    queueDraw();
+  }
+});
+for (const name of ["dash", "fill"])
+  $("draw-" + name).addEventListener("change", (e) => {
+    const sh = draw.shapes[draw.sel];
+    if (sh && !sh.locked) {
+      sh[name] = name === "fill" ? +e.target.value : e.target.value;
+      drawSave();
+      queueDraw();
+    }
+  });
+function drawStyle() {
+  return { dash: $("draw-dash").value, fill: +$("draw-fill").value };
+}
 // --- édition : propriétés du tracé sélectionné ---------------------------------
-function drawOpacity() { return +$("draw-opacity").value / 100; }
+function drawOpacity() {
+  return +$("draw-opacity").value / 100;
+}
 function drawOptsSync() {
   const sh = draw.shapes[draw.sel];
   $("draw-opts").hidden = !sh;
   if (!sh) return;
+  for (const id of ["color", "width", "opacity", "dash", "fill", "del"])
+    $("draw-" + id).disabled = !!sh.locked;
+  $("draw-lock").textContent = sh.locked ? "Déverrouiller" : "Verrouiller";
+  $("draw-lock").setAttribute("aria-pressed", String(!!sh.locked));
+  $("draw-dash").value = sh.dash || "solid";
+  $("draw-fill").value = String(sh.fill ?? 12);
   $("draw-color").value = sh.color || "#22d3ee";
   $("draw-width").value = String(sh.width || 2);
   $("draw-opacity").value = String(Math.round((sh.opacity ?? 1) * 100));
   $("draw-opacity-val").textContent = Math.round((sh.opacity ?? 1) * 100) + "%";
 }
 function drawDelete() {
-  if (draw.sel < 0) return;
+  if (draw.sel < 0 || draw.shapes[draw.sel].locked) return;
   draw.shapes.splice(draw.sel, 1);
-  draw.sel = -1; drawOptsSync(); drawSave(); queueDraw();
+  draw.sel = -1;
+  drawOptsSync();
+  drawSave();
+  queueDraw();
 }
 function drawDuplicate() {
   if (draw.sel < 0) return;
   const copy = JSON.parse(JSON.stringify(draw.shapes[draw.sel]));
+  copy.locked = false;
   // décalage visible de 12 px en prix, pour que la copie ne se superpose pas
-  const c = state.candles;
-  const y0 = c?.priceToCoordinate(0), y1 = c?.priceToCoordinate(1);
-  const perPx = (y0 != null && y1 != null) ? (y0 - y1) : 0;
-  copy.pts = copy.pts.map((p) => ({ ...p, p: p.p == null ? p.p : p.p + perPx * 12 }));
+  copy.pts = copy.pts.map((p) => ({
+    ...p,
+    p: p.p == null ? p.p : state.candles.coordinateToPrice(state.candles.priceToCoordinate(p.p) + 12),
+  }));
   draw.shapes.push(copy);
   draw.sel = draw.shapes.length - 1;
-  drawOptsSync(); drawSave(); queueDraw();
+  drawOptsSync();
+  drawSave();
+  queueDraw();
 }
 // raccourcis clavier : Suppr / Retour arrière suppriment, Échap désélectionne,
 // Ctrl+D duplique — actifs tant qu'on n'écrit pas dans un champ
 window.addEventListener("keydown", (e) => {
   const el = document.activeElement || {};
-  const typing = el.tagName === "TEXTAREA" || el.tagName === "SELECT" ||
+  const typing =
+    el.tagName === "TEXTAREA" ||
+    el.tagName === "SELECT" ||
     (el.tagName === "INPUT" && !["range", "checkbox", "radio", "button"].includes(el.type));
-  if (typing) return;   // le curseur d'opacité reste pilotable aux flèches
+  if (typing) return; // le curseur d'opacité reste pilotable aux flèches
   if (draw.sel < 0) return;
-  if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); drawDelete(); }
-  else if (e.key === "Escape") { draw.sel = -1; drawOptsSync(); queueDraw(); }
-  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") { e.preventDefault(); drawDuplicate(); }
+  if (e.key === "Delete" || e.key === "Backspace") {
+    e.preventDefault();
+    drawDelete();
+  } else if (e.key === "Escape") {
+    draw.sel = -1;
+    drawOptsSync();
+    queueDraw();
+  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+    e.preventDefault();
+    drawDuplicate();
+  }
 });
 
 function drawPt(e) {
   const r = $("draw-canvas").getBoundingClientRect();
   return { x: e.clientX - r.left, y: e.clientY - r.top };
 }
-function drawTP(x, y) {   // pixels -> {t, p}
-  const t = state.chart.timeScale().coordinateToTime(x);
-  const p = state.candles.coordinateToPrice(y);
-  return { t: t ?? state.lastBar?.time ?? null, p };
+function drawTimeValue(t) {
+  return typeof t === "number"
+    ? t
+    : typeof t === "string"
+      ? Date.parse(t + "T00:00:00Z") / 1000
+      : Date.UTC(t.year, t.month - 1, t.day) / 1000;
 }
-function drawXY(pt) {     // {t,p} -> pixels
+function drawTimes() {
+  return [...state.bars.values()].map((b) => drawTimeValue(b.time)).sort((a, b) => a - b);
+}
+function drawTimeAtLogical(l, snap = true) {
+  const times = drawTimes();
+  if (!times.length || l == null) return null;
+  if (snap) l = Math.round(l);
+  const i = Math.floor(l),
+    period = PERIOD[state.interval] || 300;
+  const t =
+    i < 0
+      ? times[0] + l * period
+      : i >= times.length - 1
+        ? times.at(-1) + (l - times.length + 1) * period
+        : times[i] + (times[i + 1] - times[i]) * (l - i);
+  return state.barsDaily ? new Date(t * 1000).toISOString().slice(0, 10) : t;
+}
+function drawLogicalAtTime(t) {
+  const times = drawTimes(),
+    v = drawTimeValue(t),
+    period = PERIOD[state.interval] || 300;
+  if (!times.length) return null;
+  let lo = 0,
+    hi = times.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (times[mid] < v) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo === 0) return (v - times[0]) / period;
+  if (lo === times.length) return times.length - 1 + (v - times.at(-1)) / period;
+  return lo - 1 + (v - times[lo - 1]) / (times[lo] - times[lo - 1]);
+}
+function drawTP(x, y) {
+  return {
+    t: drawTimeAtLogical(state.chart.timeScale().coordinateToLogical(x)),
+    p: state.candles.coordinateToPrice(y),
+  };
+}
+function drawXY(pt) {
   if (pt.t == null || pt.p == null) return null;
-  const x = state.chart.timeScale().timeToCoordinate(pt.t);
-  const y = state.candles.priceToCoordinate(pt.p);
+  const l = drawLogicalAtTime(pt.t),
+    x = l == null ? null : state.chart.timeScale().logicalToCoordinate(l),
+    y = state.candles.priceToCoordinate(pt.p);
   return x == null || y == null ? null : { x, y };
 }
+
 function shapePts(sh) { return (sh.pts || []).map(drawXY).filter(Boolean); }
 function hitShape(x, y) {
   for (let i = draw.shapes.length - 1; i >= 0; i--) {
@@ -3160,7 +3343,7 @@ function hitShape(x, y) {
   return -1;
 }
 function hitHandle(x, y) {
-  if (draw.sel < 0) return -1;
+  if (draw.sel < 0 || draw.shapes[draw.sel].locked) return -1;
   const ps = shapePts(draw.shapes[draw.sel]);
   for (let k = 0; k < ps.length; k++) if (Math.hypot(ps[k].x - x, ps[k].y - y) < 8) return k;
   return -1;
@@ -3171,40 +3354,102 @@ function hitHandle(x, y) {
     const { x, y } = drawPt(e);
     if (draw.tool === "cursor") {
       const h = hitHandle(x, y);
-      if (h >= 0) { draw.drag = { kind: "handle", h }; }
-      else { const i = hitShape(x, y); draw.sel = i; drawOptsSync();
-        if (i >= 0) draw.drag = { kind: "move", y0: y, p0: draw.shapes[i].pts.map((p) => p.p) }; }
-      queueDraw(); cv.setPointerCapture(e.pointerId); return;
+      if (h >= 0) {
+        draw.drag = { kind: "handle", h };
+      } else {
+        const i = hitShape(x, y);
+        draw.sel = i;
+        drawOptsSync();
+        if (i >= 0 && !draw.shapes[i].locked)
+          draw.drag = {
+            kind: "move",
+            x0: state.chart.timeScale().coordinateToLogical(x),
+            y0: y,
+            pts: structuredClone(draw.shapes[i].pts),
+          };
+      }
+      queueDraw();
+      cv.setPointerCapture(e.pointerId);
+      return;
     }
     if (draw.tool === "none") return;
     const pt = drawTP(x, y);
+    if (pt.t == null || !Number.isFinite(pt.p)) return;
     if (["hline", "vline"].includes(draw.tool)) {
-      draw.shapes.push({ tool: draw.tool, pts: [pt], color: $("draw-color").value, width: +$("draw-width").value, opacity: drawOpacity() });
-      drawSave(); queueDraw(); return;
+      draw.shapes.push({
+        tool: draw.tool,
+        pts: [pt],
+        color: $("draw-color").value,
+        width: +$("draw-width").value,
+        opacity: drawOpacity(),
+        ...drawStyle(),
+      });
+      draw.sel = draw.shapes.length - 1;
+      setDrawTool("cursor");
+      drawOptsSync();
+      drawSave();
+      queueDraw();
+      return;
     }
-    draw.draft = { tool: draw.tool, pts: [pt, pt], color: $("draw-color").value, width: +$("draw-width").value, opacity: drawOpacity() };
-    cv.setPointerCapture(e.pointerId); queueDraw();
+    draw.draft = {
+      tool: draw.tool,
+      pts: [pt, pt],
+      color: $("draw-color").value,
+      width: +$("draw-width").value,
+      opacity: drawOpacity(),
+      ...drawStyle(),
+    };
+    cv.setPointerCapture(e.pointerId);
+    queueDraw();
   });
   cv.addEventListener("pointermove", (e) => {
     const { x, y } = drawPt(e);
     if (draw.drag && draw.sel >= 0) {
       const sh = draw.shapes[draw.sel];
-      if (draw.drag.kind === "handle") { sh.pts[draw.drag.h] = drawTP(x, y); }
-      else { const dp = state.candles.coordinateToPrice(y) - state.candles.coordinateToPrice(draw.drag.y0);
-        sh.pts = sh.pts.map((p, i) => ({ ...p, p: draw.drag.p0[i] + dp })); draw.drag.y0 = y; draw.drag.p0 = sh.pts.map((p) => p.p); }
-      drawSave(); queueDraw(); return;
+      if (draw.drag.kind === "handle") {
+        sh.pts[draw.drag.h] = drawTP(x, y);
+      } else {
+        const dp = state.candles.coordinateToPrice(y) - state.candles.coordinateToPrice(draw.drag.y0);
+        const shift = Math.round(state.chart.timeScale().coordinateToLogical(x) - draw.drag.x0);
+        sh.pts = draw.drag.pts.map((p) => ({
+          t: shift === 0 ? p.t : drawTimeAtLogical(drawLogicalAtTime(p.t) + shift, false),
+          p: p.p + dp,
+        }));
+      }
+      queueDraw();
+      return;
     }
-    if (draw.draft) { draw.draft.pts[1] = drawTP(x, y); queueDraw(); }
+    if (draw.draft) {
+      draw.draft.pts[1] = drawTP(x, y);
+      queueDraw();
+    }
   });
   cv.addEventListener("pointerup", () => {
     if (draw.draft) {
       const [a, b] = draw.draft.pts;
       if (a.t !== b.t || a.p !== b.p) draw.shapes.push(draw.draft);
-      draw.draft = null; drawSave(); queueDraw();
+      draw.draft = null;
+      draw.sel = draw.shapes.length - 1;
+      setDrawTool("cursor");
+      drawOptsSync();
+      drawSave();
+      queueDraw();
     }
+    if (draw.drag) {
+      draw.drag = null;
+      drawSave();
+      drawOptsSync();
+    }
+  });
+  cv.addEventListener("pointercancel", () => {
+    if (draw.drag) draw.shapes = JSON.parse(draw.history.at(-1));
     draw.drag = null;
+    draw.draft = null;
+    drawOptsSync();
+    queueDraw();
   });
 })();
+
 function queueDraw() { if (draw.queued) return; draw.queued = true; requestAnimationFrame(() => { draw.queued = false; drawRender(); }); }
 function drawRender() {
   const cv = $("draw-canvas");
@@ -3224,7 +3469,7 @@ function drawRender() {
     const op = Math.min(1, Math.max(0.05, sh.opacity ?? 1));   // opacité réglable
     const isSel = i === draw.sel;
     ctx.globalAlpha = op;
-    ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.setLineDash([]);
+    ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.setLineDash(sh.dash==="dashed"?[8,5]:sh.dash==="dotted"?[2,4]:[]);
     const label = (x, y, txt) => {
       const w = ctx.measureText(txt).width + 8;
       ctx.fillStyle = col; ctx.beginPath(); ctx.roundRect(x, y - 8, w, 15, 4); ctx.fill();
@@ -3245,7 +3490,7 @@ function drawRender() {
     } else if (sh.tool === "rect" && ps.length === 2) {
       const [a, b] = ps;
       ctx.fillStyle = col;
-      ctx.globalAlpha = op * 0.12;   // remplissage homothétique à l'opacité
+      ctx.globalAlpha = op * Math.max(0,Math.min(1,(sh.fill??12)/100));   // remplissage homothétique à l'opacité
       ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
       ctx.globalAlpha = op;
       ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
@@ -3260,7 +3505,7 @@ function drawRender() {
       });
       ctx.setLineDash([]);
     }
-    if (isSel) {
+    if (isSel && !sh.locked) {
       ctx.globalAlpha = 1;           // poignées toujours lisibles
       ctx.fillStyle = col;
       ps.forEach((q) => { ctx.beginPath(); ctx.rect(q.x - 4, q.y - 4, 8, 8); ctx.fill(); ctx.strokeStyle = "#0b0e14"; ctx.lineWidth = 1; ctx.stroke(); ctx.strokeStyle = col; ctx.lineWidth = lw; });

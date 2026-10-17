@@ -1013,3 +1013,17 @@ body.workspace-analysis #gp-toggle,body.workspace-analysis #ladder-toggle,body.w
 body.workspace-analysis .hm-btn.active,body.workspace-focus .hm-btn.active {background:#293d48;box-shadow:none;color:#91d7e1;}
 body.workspace-analysis #exposure-dock .seg button.active {background:#30414c;box-shadow:none;}
 body.zen #workspace-bar,body.zen #exposure-dock {display:none;}
+
+/* Flow and drawing settings stay usable on narrow chart panes. */
+#draw-opts { max-width:calc(100% - 58px); flex-wrap:wrap; }
+#draw-opts button:disabled,#draw-bar button:disabled { opacity:.35;cursor:not-allowed; }
+#abs-settings { position:absolute;right:12px;top:48px;z-index:6;max-width:min(320px,calc(100% - 65px));padding:7px 10px;background:var(--glass2);border:1px solid var(--border2);border-radius:5px;font:10px var(--mono); }
+#abs-settings summary { cursor:pointer;color:var(--muted); }
+#abs-settings label { display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px; }
+#abs-settings input[type=color] { width:32px;height:24px;border:0;padding:0;background:none; }
+#abs-settings select { max-width:190px;background:var(--panel2);color:var(--text); }
+#abs-settings small { display:block;max-width:290px;line-height:1.5;color:var(--muted);margin-top:10px; }
+#flow-legend { max-width:calc(100% - 65px);white-space:normal;line-height:1.5; }
+#draw-canvas { touch-action:none; }
+#draw-opts #draw-lock { width:auto; min-width:94px; padding:0 7px; flex-shrink:0; font:10px var(--mono); white-space:nowrap; }
+#draw-opts .icon-btn:hover { transform:none; }

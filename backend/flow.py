@@ -41,6 +41,8 @@ TICK_SIZES = {"ES": 0.25, "NQ": 0.25, "GC": 0.1}
 # Elles alimentent la bande delta/CVD sous le graphique (GET /api/flow/{sym}/bars).
 BAR_PERIODS: dict[str, int] = {"30s": 30, "1m": 60, "5m": 300, "15m": 900,
                                "30m": 1800, "1h": 3600, "1d": 86400}
+# Cash Yahoo hourly bars start at :30, unlike the UTC-aligned crypto hour.
+BAR_BUCKETS = {**BAR_PERIODS, "1h@1800": 3600}
 BAR_HISTORY = 420        # bougies conservées par intervalle et par contrat
 
 # Calibration par instrument. Pour la crypto, la « taille » d'un print est un
@@ -93,7 +95,8 @@ class SymbolFlow:
         self._big_seq = 0
         self._absorb_seq = 0
         self._last_absorb: dict[str, float] = {"buy": 0.0, "sell": 0.0}
-        self.bars: dict[str, deque] = {k: deque(maxlen=BAR_HISTORY) for k in BAR_PERIODS}
+        self.coverage_start: float | None = None
+        self.bars: dict[str, deque] = {k: deque(maxlen=BAR_HISTORY) for k in BAR_BUCKETS}
         self.cur_bar: dict[str, dict] = {}
         self.reset_session("")
 
@@ -150,11 +153,14 @@ class SymbolFlow:
         if size > 0:
             self.sizes.append(size)
 
+        if self.coverage_start is None:
+            self.coverage_start = ts
         self._add_bar(ts, price, size, side)
 
         med = self._median_size(ts)
         thr = max(self.min_big, round(self.k_big * med))
         if size >= thr:
+            self._mark("big", size, side)
             self._big_seq += 1
             self.big.append({
                 "seq": self._big_seq, "ts": round(ts, 3), "price": price,
@@ -186,6 +192,7 @@ class SymbolFlow:
                 if ts - self._last_absorb[sd] < ABSORB_COOLDOWN:
                     continue
                 self._last_absorb[sd] = ts
+                self._mark("abs", vol, sd)
                 self._absorb_seq += 1
                 self.absorb.append({
                     "seq": self._absorb_seq, "ts": round(ts, 3), "price": price,
@@ -193,11 +200,31 @@ class SymbolFlow:
                     "threshold": limit, "instrument": instrument,
                 })
 
+    def _mark(self, kind: str, size: float, side: str | None) -> None:
+        """Accumulate once per detection, not once per snapshot/poll.
+
+        These bounded candle summaries outlive the small recent-event deques.
+        Absorption is assigned to its detection candle (not back-distributed to
+        the individual execution candles in the lookback window). Same-side
+        windows are disjoint because cooldown 25s > lookback 6s.
+        """
+        for cur in self.cur_bar.values():
+            cur[kind + "_n"] = cur.get(kind + "_n", 0) + 1
+            cur[kind + "_total"] = cur.get(kind + "_total", 0.) + size
+            key = kind + "_" + (side if side in ("buy", "sell") else "unknown")
+            cur[key] = cur.get(key, 0.) + size
+
     # --------------------------------------------------------------- bougies
     def _add_bar(self, ts: float, price: float, size: float, side: str | None) -> None:
         """Agrège le print dans chaque intervalle (OHLC + delta agressif)."""
-        for name, secs in BAR_PERIODS.items():
-            start = ts - (ts % secs)
+        for name, secs in BAR_BUCKETS.items():
+            if name == "1d":
+                # Date label of the CME trading session (UTC calendar for BTC).
+                start = datetime.fromisoformat(self.day).replace(tzinfo=timezone.utc).timestamp()
+            elif name == "1h@1800":
+                start = ((ts - 1800) // secs) * secs + 1800
+            else:
+                start = ts - (ts % secs)
             cur = self.cur_bar.get(name)
             if cur is None or cur["t"] != start:
                 if cur is not None:
@@ -222,11 +249,12 @@ class SymbolFlow:
         Le CVD est cumulé **sur la fenêtre retournée** (il repart de zéro au bord
         gauche), pour que la ligne soit lisible telle quelle côté client.
         """
-        secs = BAR_PERIODS.get(interval, 300)
+        secs = BAR_BUCKETS.get(interval, 300)
         rows = list(self.bars.get(interval, ()))[-max(1, limit):]
         cur = self.cur_bar.get(interval)
         if cur is not None:
             rows = rows + [cur]
+        rows = rows[-max(1, limit):]
         out: list[dict] = []
         cvd = 0.0
         for b in rows:
@@ -238,6 +266,9 @@ class SymbolFlow:
                 "vol": round(b["vol"], 4), "n": b["n"],
                 "delta": round(delta, 4), "cvd": round(cvd, 4),
                 "interval_s": secs,
+                **{k: b.get(k, 0) for k in (
+                    "big_n", "big_total", "big_buy", "big_sell", "big_unknown",
+                    "abs_n", "abs_total", "abs_buy", "abs_sell")},
             })
         return out
 
@@ -261,6 +292,7 @@ class SymbolFlow:
             "absorb": list(self.absorb),
             "last_price": self.last_price,
             "last_ts": self.last_ts,
+            "coverage_start": self.coverage_start,
         }
 
 

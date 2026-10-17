@@ -91,6 +91,72 @@ sur payloads réels restent nécessaires avant un tel raccordement. Les changeme
 relatifs à l'ouverture / clôture ou au placement dealer ne deviennent pas observables
 par un simple changement de design.
 
+## Marqueurs de flux par bougie
+
+Le bouton bulles active un **résumé gros trades** (montant brut × nombre de
+prints) et un **résumé absorption** distinct (`A montant × épisodes`) par bougie.
+Les montants ne sont jamais additionnés entre ces deux types. Le survol détaille
+achats, ventes, sens inconnu, delta des gros prints et côtés absorbés.
+
+- Agrégation côté serveur à la réception, pour tous les intervalles, conservée
+  en mémoire sur **420 bougies maximum par intervalle et contrat**. Les listes
+  courtes « dernières transactions » du panneau ne limitent plus cet historique.
+  La fenêtre repart après un redémarrage ; elle peut contenir des trous réseau.
+- Changer l'intervalle utilise les résumés de cet intervalle. L'heure peut être
+  alignée à `:00` ou `:30` selon les vraies bougies du graphique ; le quotidien
+  suit la date de séance CME pour ES/NQ/GC, UTC pour BTC. Les anciennes réponses
+  d'un autre symbole, intervalle ou source ne repeignent pas le nouveau graphique.
+- Un marqueur sans bougie OHLC correspondante n'est **pas** raccroché à la dernière
+  bougie ni à une bougie voisine. Aucun print n'est reconstitué depuis OHLCV.
+  Les marqueurs sont des repères sur le graphique : ils ne donnent pas un prix
+  d'exécution cash lorsqu'ils proviennent du futur sous-jacent, ni un prix
+  d'exécution d'option lorsqu'ils sont placés sur l'index BTC.
+- L'absorption reste une **estimation** volume/prix sur fenêtre de 6 s, pas une
+  observation certaine de liquidité passive. Son volume est attribué à la bougie
+  de **détection**, même si sa fenêtre commence dans la bougie précédente. Le
+  cooldown de 25 s évite le chevauchement des fenêtres du même côté. Un épisode
+  acheteur et un épisode vendeur détectés ensemble comptent comme deux épisodes.
+- BTC perp : notionnel USD ; BTC options : prime USD ; futures : contrats.
+  Ces unités ne deviennent ni de l'OI ni un volume d'options cash.
+
+Dans **Flux · couleurs / lecture**, régler séparément acheteurs agressifs absorbés
+(bleu), vendeurs agressifs absorbés (jaune), mixte (violet) et opacité. Contour par
+défaut pour conserver la couleur hausse/baisse ; corps ou marqueur seul en option.
+Le bleu signifie que **l'achat agressif est absorbé par la vente passive**, pas un
+signal acheteur. Le jaune signifie l'inverse. Les préférences sont locales au navigateur.
+
+Le **Zoom de lecture des montants** élargit les bougies autour de la zone observée ;
+**Vue d'ensemble** retrouve le cadrage initial. Sur une vue très dézoomée, les
+marqueurs et chiffres sont compactés à la largeur de leur bougie pour éviter les
+empilements ; zoomer ou survoler pour lire les montants complets. Les données ne
+sont pas supprimées quand on dézoome.
+
+## Niveaux et dessins
+
+Les libellés affichent **Call Wall / Put Wall / Zero Gamma** en toutes lettres,
+y compris les étiquettes du graphique. Les étiquettes d'axe peuvent s'étendre vers
+la gauche pour ne pas tronquer le nom du niveau. Ces niveaux calculés restent
+pilotés par les données et les interrupteurs de niveaux : ils ne sont pas des
+annotations déplaçables.
+
+Pour un dessin, choisir l'outil puis tracer. Il est automatiquement sélectionné.
+Le curseur de sélection permet de :
+
+- déplacer tout le dessin en **temps et prix**, ou chacun de ses points ;
+- régler couleur, épaisseur en pixels, opacité, trait continu/tirets/points et
+  remplissage des rectangles ;
+- verrouiller/déverrouiller, dupliquer, supprimer. Un dessin verrouillé reste
+  sélectionnable pour le déverrouiller, mais ne bouge pas et résiste à « effacer ».
+  Sa copie est indépendante et déverrouillée ;
+- annuler **toutes** les modifications (pas uniquement le dernier ajout), puis
+  rétablir : boutons, Ctrl/Cmd+Z, Ctrl/Cmd+Maj+Z ou Ctrl/Cmd+Y. Jusqu'à 100 opérations
+  pour l'instrument actif ; l'historique d'annulation ne survit pas au rechargement.
+
+Les dessins sont enregistrés localement par instrument (onglet), en coordonnées
+**temps/prix**, pas en pixels ; zoom, intervalle et taille de fenêtre ne les
+réécrivent pas. L'outil de navigation (main) rend le contrôle du graphique. Aucun
+outil texte n'est ajouté dans cette livraison.
+
 ## Recette
 
 `tests/test_exposure.py` vérifie conservation Gamma/Vanna, masquage d'expirations,
@@ -98,3 +164,12 @@ bornes, cellule absente/zéro et projection/API. Le navigateur de fixture teste
 sélection liée, modes, préférences, lecture des snapshots, isolation de contrat,
 0DTE vide, authentification et mises en page desktop/tablette/mobile. Ces données
 de fixture ne sont jamais un flux live ni une validation fournisseur.
+
+La recette des marqueurs/dessins est séparée : `tests/test_flow_markers.py` couvre
+les totaux/côtés, changement d'intervalle, alignement horaire, rétention, séances,
+non-recomptage, couverture/API et isolation perp/options. `tests/flow_draw_browser.cjs`
+vérifie 60 bougies /120 marqueurs, chiffres absorption, couleurs, déplacement,
+poignées, verrouillage, styles, annulation/rétablissement, persistance et mobile.
+Pour les deux recettes navigateur : démarrer `tests/ui_fixture.py` sur 8010, puis
+`node tests/browser.cjs` et `node tests/flow_draw_browser.cjs` (Playwright et Chromium
+locaux dans `.cache/ui`). Ne pas remplacer le serveur réel par cette fixture.

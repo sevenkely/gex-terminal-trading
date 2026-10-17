@@ -121,7 +121,7 @@
         <label for="session-select">Session</label>
         <select id="session-select" aria-label="Session VWAP et profil"><option value="auto">Auto</option><option value="rth">RTH 09:30–16:00 ET</option><option value="eth">CME 18:00–17:00 ET</option><option value="utc">Crypto 00:00 UTC</option></select>
         <span id="filter-summary" class="mono" aria-live="polite">Chargement des échéances…</span>
-        <details id="methodology"><summary>Méthodologie</summary><p>VWAP approximatif à partir des bougies ; profil de volume estimé OHLCV, pas du volume-at-price. GEX estimé : calls positifs / puts négatifs. Le positionnement dealer n'est pas observé. CW/PW = pics gamma ; walls OI = concentrations structurelles. FLIP = zéro du GEX agrégé selon le spot. OI CBOE quotidien, chaîne différée. ES/NQ/GC : niveaux cash projetés, pas de gamma natif futures. Max pain agrégé : descriptif, pas une cible de prix.</p></details>
+        <details id="methodology"><summary>Méthodologie</summary><p>VWAP approximatif à partir des bougies ; profil de volume estimé OHLCV, pas du volume-at-price. GEX estimé : calls positifs / puts négatifs. Le positionnement dealer n'est pas observé. Call Wall / Put Wall = pics gamma ; walls OI = concentrations structurelles. Zero Gamma = zéro du GEX agrégé selon le spot. OI CBOE quotidien, chaîne différée. ES/NQ/GC : niveaux cash projetés, pas de gamma natif futures. Max pain agrégé : descriptif, pas une cible de prix.</p></details>
       </div>
       <div id="feed-warning" role="status" hidden></div>
       <div id="expiry-empty" role="status" hidden><div><strong id="expiry-empty-title">Aucune échéance disponible</strong><p id="expiry-empty-detail"></p></div><button id="expiry-show-all" class="btn">Voir ALL</button></div>
@@ -167,26 +167,39 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="14" r="5"/><circle cx="17" cy="8" r="3"/></svg>
           </button>
           <div class="sep"></div>
-          <button id="draw-undo" title="Annuler le dernier tracé (Ctrl+Z)">
+          <button id="draw-undo" title="Annuler la dernière modification (Ctrl+Z)">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>
           </button>
-          <button id="draw-clear" title="Effacer tous les tracés">
+          <button id="draw-redo" title="Rétablir (Ctrl+Maj+Z / Ctrl+Y)">↪</button>
+          <button id="draw-clear" title="Effacer les tracés non verrouillés">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
           </button>
         </div>
         <div id="draw-opts" hidden>
           <input type="color" id="draw-color" value="#22d3ee" title="Couleur du tracé">
           <select id="draw-width" title="Épaisseur">
-            <option value="1">1 px</option><option value="2" selected>2 px</option><option value="3">3 px</option>
+            <option value="1">1 px</option><option value="2" selected>2 px</option><option value="3">3 px</option><option value="4">4 px</option><option value="6">6 px</option><option value="8">8 px</option>
           </select>
           <label class="draw-op" title="Opacité">
             <span>OPA</span>
             <input type="range" id="draw-opacity" min="10" max="100" step="5" value="100">
             <b id="draw-opacity-val">100%</b>
           </label>
+          <select id="draw-dash" aria-label="Style du tracé"><option value="solid">Continu</option><option value="dashed">Tirets</option><option value="dotted">Points</option></select>
+          <label class="draw-op">Fond <select id="draw-fill" aria-label="Remplissage des zones"><option value="0">0%</option><option value="12" selected>12%</option><option value="25">25%</option><option value="50">50%</option><option value="75">75%</option><option value="100">100%</option></select></label>
+          <button id="draw-lock" class="icon-btn" title="Verrouiller le dessin" aria-pressed="false">Verrouiller</button>
           <button id="draw-dup" class="icon-btn" title="Dupliquer le tracé (Ctrl+D)">⧉</button>
           <button id="draw-del" class="icon-btn" title="Supprimer le tracé sélectionné (Suppr)">✕</button>
         </div>
+        <details id="abs-settings"><summary>Flux · couleurs / lecture</summary>
+          <p><button id="flow-read">Zoom de lecture des montants</button> <button id="flow-overview">Vue d’ensemble</button></p>
+          <label>Acheteurs agressifs absorbés <input type="color" id="abs-buy" aria-label="Acheteurs agressifs absorbés"></label>
+          <label>Vendeurs agressifs absorbés <input type="color" id="abs-sell" aria-label="Vendeurs agressifs absorbés"></label>
+          <label>Mixte <input type="color" id="abs-mixed" aria-label="Absorption mixte"></label>
+          <label>Application <select id="abs-mode"><option value="border">Contour (préserve hausse/baisse)</option><option value="body">Corps + contour</option><option value="marker">Marqueur uniquement</option></select></label>
+          <label>Opacité <input type="range" id="abs-opacity" min="0.2" max="1" step="0.05"></label>
+          <small>Absorption estimée, pas un signal directionnel. Bleu : l'achat agressif rencontre une résistance passive vendeuse. Jaune : la vente agressive rencontre une résistance passive acheteuse. Les montants et épisodes restent affichés sur le marqueur A.</small>
+        </details>
         <div id="hud" class="mono" hidden></div>
         <canvas id="workspace-overlay-canvas" aria-hidden="true"></canvas>
         <div id="ohlc-legend" class="mono"></div>
@@ -343,10 +356,10 @@
           <div class="zm-struct"><span id="zm-struct-p" class="mono"></span><span id="zm-struct-c" class="mono"></span></div>
           <div class="zm-track">
             <div id="zm-em" class="zm-em"></div>
-            <div id="zm-zero" class="zm-zero"><span>FLIP</span></div>
+            <div id="zm-zero" class="zm-zero"><span>Zero Gamma</span></div>
             <div id="zm-pain" class="zm-wall pain"><span class="flag">PAIN</span></div>
-            <div id="zm-pw" class="zm-wall pw"><span class="flag">PW1</span></div>
-            <div id="zm-cw" class="zm-wall cw"><span class="flag">CW1</span></div>
+            <div id="zm-pw" class="zm-wall pw"><span class="flag">Put Wall 1</span></div>
+            <div id="zm-cw" class="zm-wall cw"><span class="flag">Call Wall 1</span></div>
             <div id="zm-spot" class="zm-spot"><span class="dia"></span></div>
           </div>
           <div class="zm-labels">
@@ -364,9 +377,9 @@
             <button data-w="5">±5%</button><button data-w="8">±8%</button>
           </div>
           <div id="lvl-toggles">
-            <button data-t="cw" class="ltgl active" style="--c:#2dd4a7">CW</button>
-            <button data-t="pw" class="ltgl active" style="--c:#f0616d">PW</button>
-            <button data-t="flip" class="ltgl active" style="--c:#f5c542">FLIP</button>
+            <button data-t="cw" class="ltgl active" style="--c:#2dd4a7">Call Wall</button>
+            <button data-t="pw" class="ltgl active" style="--c:#f0616d">Put Wall</button>
+            <button data-t="flip" class="ltgl active" style="--c:#f5c542">Zero Gamma</button>
             <button data-t="pain" class="ltgl" style="--c:#e8ecf4">PAIN</button>
             <button data-t="hist" class="ltgl active" style="--c:#8b93a7">HIST γ</button>
             <button data-t="band" class="ltgl active" style="--c:#8b93a7">BANDES</button>
@@ -382,7 +395,7 @@
             <div class="tile-value" id="lv-netgex">—</div>
           </div>
           <div class="tile">
-            <div class="tile-label">GAMMA FLIP</div>
+            <div class="tile-label">ZERO GAMMA</div>
             <div class="tile-value yellow" id="lv-zerogex">—</div>
             <div class="tile-sub" id="lv-zerogex-note"></div>
           </div>
@@ -397,7 +410,7 @@
             <div class="tile-sub" id="lv-maxpain-note"></div>
           </div>
           <div class="tile">
-            <div class="tile-label">PROXIMITÉ FLIP · séance</div>
+            <div class="tile-label">PROXIMITÉ ZERO GAMMA · séance</div>
             <div class="tile-value yellow" id="lv-pin">—</div>
             <div class="tile-sub" id="lv-pin-note">Indice heuristique, pas une probabilité</div>
             <div class="gauge" id="pin-gauge" style="--sc:0"></div>
@@ -478,9 +491,9 @@
             <option value="regime">Régime γ devient</option>
           </select>
           <select id="rule-level" class="mono">
-            <option value="cw1">CW1</option>
-            <option value="pw1">PW1</option>
-            <option value="flip">FLIP</option>
+            <option value="cw1">Call Wall 1</option>
+            <option value="pw1">Put Wall 1</option>
+            <option value="flip">Zero Gamma</option>
             <option value="pain">MAX PAIN</option>
             <option value="vwap">VWAP</option>
             <option value="price">Prix fixe</option>
@@ -492,7 +505,7 @@
           </select>
           <button id="rule-add" class="sc-reset mono" title="Ajouter la règle">+ AJOUTER</button>
         </div>
-        <div id="rules-list"><div class="alerts-empty muted">Aucune règle — ex. « franchit FLIP », « approche ≤ 20 bps de CW1 », « régime γ devient SHORT ».</div></div>
+        <div id="rules-list"><div class="alerts-empty muted">Aucune règle — ex. « franchit Zero Gamma », « approche ≤ 20 bps de Call Wall 1 », « régime γ devient SHORT ».</div></div>
         <div id="rules-log"><div class="alerts-empty muted">Déclenchements de vos règles — horodatés, avec le prix au moment du signal.</div></div>
       </div>
 

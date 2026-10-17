@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -954,8 +954,8 @@ def api_flow(symbol: str, src: str = "perp"):
 
 
 @app.get("/api/flow/{symbol}/bars")
-def api_flow_bars(symbol: str, interval: str = "5m", limit: int = 240,
-                  src: str = "perp"):
+def api_flow_bars(symbol: str, interval: str = Query("5m", pattern="^(30s|1m|5m|15m|30m|1h|1d)$"), limit: int = 240,
+                  src: str = "perp", offset: int = Query(0, ge=0, le=1800)):
     """Delta agressif et CVD par bougie (bande basse du graphique).
 
     Même source que `/api/flow/{sym}` : tape Deribit pour BTC (`src=perp` ou
@@ -965,19 +965,30 @@ def api_flow_bars(symbol: str, interval: str = "5m", limit: int = 240,
     sym = symbol.upper()
     if sym not in SYMBOLS:
         return {"available": False, "reason": "symbole inconnu"}
+    if offset not in (0, 1800) or (offset and interval != "1h"):
+        raise HTTPException(status_code=422, detail="offset=1800 is supported only for 1h cash-aligned bars")
+    bucket = "1h@1800" if offset else interval
     limit = max(20, min(int(limit), 420))
     if sym in CRYPTO_SYMBOLS:
         contract = "BTC-OPTIONS" if src == "options" else deribit.PERP
-        bars = crypto_flow.bars(("DERIBIT", contract), interval, limit)
+        bars = crypto_flow.bars(("DERIBIT", contract), bucket, limit)
         unit = "USD"
+        snap = crypto_flow.get(("DERIBIT", contract)) or {}
     else:
-        bars = bridge.get_flow_bars(sym, interval, limit)
+        bars = bridge.get_flow_bars(sym, bucket, limit)
         snap = bridge.get_flow(sym) or {}
         unit = snap.get("unit", "contrats")
     return {
         "available": bool(bars),
-        "symbol": sym, "interval": interval, "unit": unit,
+        "symbol": sym, "interval": interval, "offset_s": offset, "unit": unit,
         "bars": bars,
+        "retention_bars": 420,
+        "first_observed_ts": snap.get("coverage_start"),
+        "retained_from": bars[0]["t"] if bars else None,
+        "last_observed_ts": snap.get("last_ts"),
+        "coverage": "Observed since process start, bounded to 420 bars per contract/interval; "
+                    "no synthetic backfill. Absorption totals belong to the detection candle; "
+                    "same-side windows are disjoint.",
         "reason": None if bars else
                   ("Le tape se remplit depuis le démarrage du serveur : "
                    "aucune bougie pour l'instant."),
