@@ -33,6 +33,12 @@ let launchedBrowser;
 
  await page.waitForFunction(()=>window.state?.profile?.strikes?.length>0);
  assert.match(await page.locator('#feed-warning').innerText(),/DÉMONSTRATION/);
+ // The old aggregate profile is the default, the expiry grid remains optional.
+ assert.equal(await page.locator('#workspace-preset').inputValue(),'classic');
+ assert(await page.locator('#sidebar').isVisible());
+ assert.equal(await page.locator('#exposure-dock').isVisible(),false);
+ assert(await page.locator('#sbp-gex').isVisible());
+ await page.selectOption('#workspace-preset','analysis');
  // New linked cockpit: bounded expiry grid, keyboard cell selection and saved layouts.
  await page.waitForFunction(()=>document.querySelectorAll('#exposure-table button').length>0);
  await page.locator('#exposure-table button').first().click();
@@ -139,6 +145,15 @@ let launchedBrowser;
  assert(await page.locator('#exposure-table').isVisible());
  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Mobile page overflows horizontally');
  await page.screenshot({path:'.cache/ui/cockpit-mobile.png',fullPage:true});
+ await page.selectOption('#workspace-preset','classic');
+ assert(await page.locator('#sbp-gex').isVisible());
+ assert.equal(await page.locator('#exposure-dock').isVisible(),false);
+ await page.locator('#workspace-save').click();
+ await page.reload();
+ await page.waitForFunction(()=>window.state?.profile?.strikes?.length>0);
+ assert.equal(await page.locator('#workspace-preset').inputValue(),'classic');
+ assert(await page.locator('#sbp-gex').isVisible());
+ assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
  assert.equal(errors.length,0,errors.join('\n'));
  console.log('Browser: viewer login, full/empty synthetic 0DTE, ALL recovery, stale warning, zero-volume VWAP, sessions, admin lock, research, linked expiry cockpit, saved layouts, observed replay, flow isolation, validation and responsive controls passed.');
  await browser.close();

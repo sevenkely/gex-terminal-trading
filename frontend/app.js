@@ -1165,7 +1165,7 @@ function flowRender() {
     }
     html+=`<br>Delta gros prints ${amt(cu.buy-cu.sell)} · sens inconnu ${amt(cu.unknown||0)}<br>${CRYPTO.has(state.symbol)?flowSrc==="options"?"Prime options USD · repère sur index, pas un prix d’exécution":"Notionnel perp USD":"Contrats du sous-jacent · repère OHLC du graphique"}`;
     tip.innerHTML = html;
-    tip.style.left = Math.min(hit.x + 12, area.clientWidth - tip.offsetWidth - 8) + "px";
+    tip.style.left = Math.max(8,Math.min(hit.x + 12, area.clientWidth - tip.offsetWidth - 8)) + "px";
     tip.style.top = Math.max(4, hit.y - tip.offsetHeight - 10) + "px";
     tip.hidden = false;
   });

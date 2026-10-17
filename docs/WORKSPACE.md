@@ -2,11 +2,16 @@
 
 ## Organisation
 
-L’espace **Analyse** place le graphique et une heatmap par échéance côte à côte.
+La vue **Classique · profil global** est la vue principale : elle conserve le
+graphique, les niveaux, le profil GEX agrégé et les anciens onglets GEX / Alertes /
+Flux / Futures. Les bulles, les chiffres d’absorption et les dessins améliorés
+restent disponibles. La grille par échéance n’est pas affichée dans cette vue.
+
+L’espace **Analyse · échéances**, accessible par le sélecteur **Vue**, place le graphique et une heatmap par échéance côte à côte.
 Le panneau est redimensionnable à la souris ; son séparateur est accessible au
 clavier (flèches gauche/droite). Sous 1180 px, les outils passent sous le graphique.
 
-Trois vues : **Analyse**, **Focus graphique**, **Recherche**. La dernière retrouve
+Quatre vues : **Classique**, **Analyse**, **Focus graphique**, **Recherche**. La dernière ouvre directement
 les outils détaillés existants, le flow options, les statistiques et VALIDATION.
 « Enregistrer la vue » mémorise localement métrique, fenêtre, nombre de niveaux,
 mode de superposition, bandeau et largeur pour cette vue. Aucun secret n'est

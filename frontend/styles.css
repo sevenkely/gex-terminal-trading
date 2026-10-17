@@ -1027,3 +1027,12 @@ body.zen #workspace-bar,body.zen #exposure-dock {display:none;}
 #draw-canvas { touch-action:none; }
 #draw-opts #draw-lock { width:auto; min-width:94px; padding:0 7px; flex-shrink:0; font:10px var(--mono); white-space:nowrap; }
 #draw-opts .icon-btn:hover { transform:none; }
+
+/* Classic keeps the original aggregate GEX sidebar and chart overlays. */
+body.workspace-classic #exposure-dock { display:none; }
+.prow .k { flex-wrap:wrap; }
+.prow .tag { white-space:nowrap; }
+
+#flow-tip { max-width:min(370px,calc(100% - 64px));white-space:normal;overflow-wrap:anywhere;box-sizing:border-box; }
+
+body.workspace-classic .workspace-grid-control { display:none!important; }

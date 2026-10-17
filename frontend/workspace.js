@@ -6,15 +6,19 @@
   let grid=null, selected=null, context='', seq=0, controller=null, replay=[], replayContext='', timer=null, running=false;
   let saved={};try{saved=JSON.parse(localStorage.getItem(KEY)||'{}');}catch{}
   if(!saved || typeof saved!=='object' || Array.isArray(saved))saved={};
+  // Keep saved layouts, but introduce the classic landing view once on upgrade.
+  if(saved.version!==2){saved.active='classic';saved.version=2;}
   const time=t=>new Date(t*1000).toLocaleString('fr-FR',{timeZone:'UTC'});
   function node(tag,text,parent){const n=document.createElement(tag);if(text!=null)n.textContent=text;if(parent)parent.appendChild(n);return n;}
   function pause(){clearTimeout(timer);timer=null;running=false;el('dock-replay-play').textContent='Lecture';}
   function preset(){
     pause();const mode=el('workspace-preset').value;
-    document.body.classList.remove('workspace-analysis','workspace-focus','workspace-research');
+    document.body.classList.remove('workspace-classic','workspace-analysis','workspace-focus','workspace-research');
     document.body.classList.add('workspace-'+mode);
-    if(mode==='research'){document.body.classList.remove('sb-collapsed');el('sb-collapse').textContent='◀';document.querySelector('#sb-tabs [data-p="research"]')?.click();}
-    if(mode!=='research')refresh();
+    if(mode==='classic'||mode==='research'){document.body.classList.remove('sb-collapsed');el('sb-collapse').textContent='◀';document.querySelector(mode==='classic'?'#sb-tabs [data-p="gex"]':'#sb-tabs [data-p="research"]')?.click();}
+    if(mode==='classic')el('exposure-clear').click();
+    if(mode==='analysis'||mode==='focus')refresh();
+    if(state.chart)requestAnimationFrame(()=>{queueGamma();queueDraw();queueFlow();});
     requestAnimationFrame(draw);
   }
   function apply(view){
@@ -101,7 +105,7 @@
     const canvas=el('workspace-overlay-canvas'),area=el('chart-area'),w=area.clientWidth,h=area.clientHeight,dpr=devicePixelRatio||1;
     if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);}
     const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
-    if(!grid?.available||grid.symbol!==state.symbol||grid.filter!==state.filter||!state.candles||el('workspace-overlay').value==='off'||document.body.classList.contains('workspace-research'))return;
+    if(!grid?.available||grid.symbol!==state.symbol||grid.filter!==state.filter||!state.candles||el('workspace-overlay').value==='off'||document.body.classList.contains('workspace-research')||document.body.classList.contains('workspace-classic'))return;
     const right=w-(state.chart?.priceScale('right').width?.()||70),mode=el('workspace-overlay').value;
     let rows=ranked().slice(0,Number(el('workspace-depth').value));
     if(selected){rows=rows.filter(r=>r.strike!==selected.strike);rows.unshift({strike:selected.strike,value:0,selected:true});}
@@ -155,7 +159,7 @@
   el('workspace-tape').addEventListener('change',()=>document.body.classList.toggle('workspace-no-tape',!el('workspace-tape').checked));
   el('workspace-save').addEventListener('click',()=>{
     const name=el('workspace-preset').value;
-    saved[name]={depth:el('workspace-depth').value,overlay:el('workspace-overlay').value,metric:el('exposure-metric').value,band:el('exposure-band').value,tape:el('workspace-tape').checked,width:el('exposure-dock').offsetWidth};saved.active=name;
+    saved[name]={depth:el('workspace-depth').value,overlay:el('workspace-overlay').value,metric:el('exposure-metric').value,band:el('exposure-band').value,tape:el('workspace-tape').checked,width:el('exposure-dock').offsetWidth};saved.active=name;saved.version=2;
     try{localStorage.setItem(KEY,JSON.stringify(saved));el('workspace-status').textContent='Vue enregistrée sur cet appareil';}catch{el('workspace-status').textContent='Stockage local indisponible';}
   });
   el('workspace-reset').addEventListener('click',()=>{saved={};localStorage.removeItem(KEY);location.reload();});
@@ -181,7 +185,7 @@
   for(const event of ['pointermove','wheel','touchmove'])el('chart-area').addEventListener(event,queueOverlay,{passive:true});
   new ResizeObserver(()=>{queueOverlay();replayRender();}).observe(el('chart-area'));
   window.gexAccessReady.then(()=>{
-    if(['analysis','focus','research'].includes(saved.active))el('workspace-preset').value=saved.active;
+    if(['classic','analysis','focus','research'].includes(saved.active))el('workspace-preset').value=saved.active;
     apply(saved[el('workspace-preset').value]);
     setInterval(()=>{
       const next=state.symbol+'|'+state.filter;

@@ -51,9 +51,9 @@
   <!-- ======================= MAIN ======================= -->
   <nav id="workspace-bar" aria-label="Espace d’analyse">
     <strong>ESPACE D’ANALYSE</strong>
-    <label>Vue <select id="workspace-preset"><option value="analysis">Analyse</option><option value="focus">Focus graphique</option><option value="research">Recherche</option></select></label>
-    <label>GEX <select id="workspace-overlay"><option value="levels">Niveaux</option><option value="channels">Concentrations</option><option value="off">Masqué</option></select></label>
-    <label>Niveaux <select id="workspace-depth"><option value="3">3</option><option value="5" selected>5</option><option value="10">10</option><option value="15">15</option></select></label>
+    <label>Vue <select id="workspace-preset"><option value="classic" selected>Classique · profil global</option><option value="analysis">Analyse · échéances</option><option value="focus">Focus graphique</option><option value="research">Recherche</option></select></label>
+    <label class="workspace-grid-control">GEX <select id="workspace-overlay"><option value="levels">Niveaux</option><option value="channels">Concentrations</option><option value="off">Masqué</option></select></label>
+    <label class="workspace-grid-control">Niveaux <select id="workspace-depth"><option value="3">3</option><option value="5" selected>5</option><option value="10">10</option><option value="15">15</option></select></label>
     <label><input id="workspace-tape" type="checkbox" checked> Bandeau</label>
     <button id="workspace-save" class="hm-btn">Enregistrer la vue</button>
     <button id="workspace-reset" class="hm-btn">Réinitialiser</button>
@@ -731,6 +731,6 @@
 <script src="app.js?v=5"></script>
 <script src="research.js?v=3"></script>
 <script src="validation.js?v=1"></script>
-<script src="workspace.js?v=1"></script>
+<script src="workspace.js?v=2"></script>
 </body>
 </html>
