@@ -17,8 +17,9 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from pricing import rates_for
 
-YEAR = 365.0
+YEAR = 365.25
 
 
 def _ncdf(x: float) -> float:
@@ -26,13 +27,13 @@ def _ncdf(x: float) -> float:
 
 
 def bs_delta(spot: float, strike: float, t_years: float, vol: float,
-             is_call: bool) -> float:
+             is_call: bool, rate: float = 0., dividend_yield: float = 0.) -> float:
     """Delta Black-Scholes (r = 0) : N(d1) call, N(d1) − 1 put."""
     if spot <= 0 or strike <= 0 or t_years <= 0 or vol <= 0:
         return 0.0
     s = vol * math.sqrt(t_years)
-    d1 = (math.log(spot / strike) + 0.5 * vol * vol * t_years) / s
-    return _ncdf(d1) if is_call else _ncdf(d1) - 1.0
+    d1 = (math.log(spot / strike) + (rate - dividend_yield + 0.5 * vol * vol) * t_years) / s
+    return math.exp(-dividend_yield*t_years) * (_ncdf(d1) if is_call else _ncdf(d1) - 1.0)
 
 
 def _atm_iv(strikes: np.ndarray, ivs: np.ndarray, spot: float) -> float | None:
@@ -71,23 +72,20 @@ def _delta_iv(strikes: np.ndarray, ivs: np.ndarray, deltas: np.ndarray,
 def _max_pain(strikes: np.ndarray, call_oi: np.ndarray,
               put_oi: np.ndarray) -> float | None:
     """Strike qui minimise le payout total des détenteurs d'options."""
-    if not len(strikes):
-        return None
-    k = np.asarray(strikes, dtype=float)
-    d = k[None, :] - k[:, None]            # (candidat, strike contrat)
-    payout = (np.clip(d, 0, None) * call_oi[None, :]
-              + np.clip(-d, 0, None) * put_oi[None, :]).sum(axis=1)
-    if not np.isfinite(payout).any():
-        return None
-    return float(k[int(np.argmin(payout))])
+    from gex import max_pain
+    return max_pain(strikes, call_oi, put_oi)
 
 
 def expiry_table(chain, spot: float, max_rows: int = 12) -> list[dict]:
     """Une ligne par échéance, triée par maturité croissante."""
     exp = np.asarray(chain.exp_epoch, dtype=float)
-    days = np.asarray(chain.exp_days, dtype=float)
+    import time
+    now = time.time()
+    days = (exp - now) / 86400.0
     by_exp: dict[float, list[int]] = {}
     for i, e in enumerate(exp):
+        if e <= now:
+            continue
         by_exp.setdefault(float(e), []).append(i)
 
     rows: list[dict] = []
@@ -98,9 +96,9 @@ def expiry_table(chain, spot: float, max_rows: int = 12) -> list[dict]:
         iv = np.asarray(chain.iv, dtype=float)[idx_arr]
         oi = np.asarray(chain.oi, dtype=float)[idx_arr]
         dte = float(days[idx_arr[0]])
-        t = max(dte, 1.0 / 24.0) / YEAR
+        t = max(dte, 1.0 / 86400.0) / YEAR
 
-        deltas = np.array([bs_delta(spot, float(kk), t, float(vv), bool(cc))
+        deltas = np.array([bs_delta(spot, float(kk), t, float(vv), bool(cc), float(rates_for(chain, t)), chain.dividend_yield)
                            for kk, vv, cc in zip(k, iv, is_c)])
         calls = is_c
         puts = ~is_c

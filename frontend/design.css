@@ -1,0 +1,551 @@
+/* Studio skin: keep price pixels quiet; bring motion to navigation and context. */
+body.design-studio {
+  --studio-accent: #67dfda;
+  --studio-glow: rgba(66, 211, 200, 0.12);
+  --studio-edge: rgba(139, 173, 202, 0.19);
+  --studio-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+#tape,
+#tape-control {
+  display: none !important;
+}
+body.design-studio #topbar {
+  padding: 9px 14px;
+  gap: 14px;
+  background: linear-gradient(110deg, var(--panel), var(--bg2) 70%);
+  border-bottom: 1px solid var(--studio-edge);
+  box-shadow: 0 8px 30px #00000018;
+  z-index: 12;
+}
+body.design-studio .brand {
+  gap: 9px;
+}
+body.design-studio .brand-text span {
+  font-size: 12px;
+  letter-spacing: 1.5px;
+}
+body.design-studio .brand-text small {
+  display: none;
+}
+body.design-studio .logo {
+  border-radius: 11px;
+  background: linear-gradient(145deg, #23505666, #10292d44);
+  border-color: #5adcd04a;
+  box-shadow:
+    inset 0 1px 0 #ffffff16,
+    0 0 20px #46d3c818;
+}
+body.design-studio #tabs {
+  gap: 7px;
+  padding: 3px 1px;
+}
+body.design-studio #tabs button {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  grid-template-rows: 13px 16px 8px;
+  gap: 1px 5px;
+  position: relative;
+  flex: 1 0 114px;
+  min-width: 114px;
+  max-width: 146px;
+  padding: 8px 7px;
+  border-radius: 9px;
+  background: linear-gradient(155deg, #8aa6c20c, #8aa6c203);
+  border: 1px solid var(--studio-edge);
+  box-shadow: inset 0 1px 0 #ffffff06;
+  overflow: hidden;
+}
+body.design-studio #tabs button.active {
+  background: linear-gradient(125deg, #40cbbb1e, #73a8e50b);
+  border-color: #5dd9d47a;
+  box-shadow:
+    inset 0 1px 0 #b0fff222,
+    0 0 18px #40cbbb0d;
+}
+body.design-studio #tabs button.active::after {
+  left: 18%;
+  right: 18%;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--studio-accent),
+    transparent
+  );
+  box-shadow: 0 -2px 12px #67dfda88;
+}
+body.design-studio .instrument-mark {
+  grid-column: 1;
+  grid-row: 1 / 4;
+  width: 26px;
+  height: 26px;
+  align-self: center;
+  object-fit: contain;
+  border-radius: 5px;
+  filter: drop-shadow(0 2px 4px #0004);
+}
+body.design-studio #tabs .t-sym {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+}
+body.design-studio #tabs .t-px {
+  grid-column: 2 / 4;
+  grid-row: 2;
+  font-size: 11px;
+  color: var(--text);
+  justify-self: start;
+}
+body.design-studio #tabs .t-chg {
+  grid-column: 3;
+  grid-row: 1;
+  font-size: 9px;
+  justify-self: end;
+}
+body.design-studio #tabs .t-spark {
+  display: block;
+  grid-column: 2 / 4;
+  grid-row: 3;
+  position: static;
+  width: 100%;
+  height: 8px;
+  align-self: end;
+  justify-self: end;
+  opacity: 0.6;
+}
+body.design-studio #tabs button.active .t-spark {
+  opacity: 1;
+}
+body.design-studio .chip {
+  border-radius: 6px;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+body.design-studio .chip .dot {
+  box-shadow: 0 0 9px currentColor;
+}
+body.design-studio #workspace-bar {
+  min-height: 42px;
+  padding: 7px 14px;
+  gap: 10px;
+  background: linear-gradient(90deg, #68c9cb05, transparent 70%);
+  border-bottom-color: var(--studio-edge);
+}
+body.design-studio #workspace-bar > strong {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+body.design-studio button,
+body.design-studio select {
+  transition:
+    background 0.25s,
+    border-color 0.25s,
+    box-shadow 0.25s,
+    color 0.25s,
+    transform 0.3s var(--studio-ease);
+}
+body.design-studio .hm-btn,
+body.design-studio #price-controls button,
+body.design-studio #flow-inspector button,
+body.design-studio select {
+  border-radius: 6px;
+  box-shadow: inset 0 1px 0 #ffffff07;
+}
+body.design-studio button:hover {
+  border-color: #67dfda77;
+  box-shadow:
+    0 3px 12px #0002,
+    inset 0 1px 0 #ffffff0c;
+}
+body.design-studio button:focus-visible,
+body.design-studio select:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 3px;
+}
+body.design-studio #chart-toolbar {
+  background: linear-gradient(110deg, #59b5ac07, transparent 65%);
+}
+body.design-studio #hero {
+  gap: 9px;
+}
+body.design-studio #hero-symbol {
+  border-radius: 5px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  padding: 4px 6px;
+}
+body.design-studio .hero-instrument-mark {
+  width: 27px;
+  height: 27px;
+  object-fit: contain;
+  border-radius: 5px;
+}
+body.design-studio #live-price {
+  letter-spacing: -0.06em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+body.design-studio #hero-regime {
+  border-radius: 4px;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+body.design-studio .seg {
+  border-radius: 6px;
+  padding: 3px;
+  background: #758baa0b;
+  border-color: var(--studio-edge);
+}
+body.design-studio .seg button {
+  border-radius: 4px;
+}
+body.design-studio .seg button.active {
+  background: #62d9cf22;
+  color: #a3eee6;
+  box-shadow: inset 0 0 0 1px #67dfda30;
+}
+body.design-studio #price-reset {
+  border-color: #67dfda4d;
+  color: var(--studio-accent);
+  background: #67dfda0b;
+}
+body.design-studio #price-fullscreen {
+  background: linear-gradient(140deg, #4c9b9c22, #5f8db012);
+}
+body.design-studio #data-toolbar {
+  background: #7185a506;
+}
+body.design-studio #sidebar {
+  background: linear-gradient(160deg, #67dfda05, transparent 45%), var(--bg2);
+}
+body.design-studio #context-rail {
+  padding: 18px 14px 14px;
+}
+body.design-studio #context-rail header {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+body.design-studio #context-rail header span {
+  font-size: 9px;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+body.design-studio .context-actions {
+  margin-bottom: 12px;
+}
+body.design-studio #context-levels {
+  display: grid;
+  gap: 8px;
+}
+body.design-studio .context-level {
+  position: relative;
+  overflow: hidden;
+  padding: 12px 10px;
+  gap: 7px;
+  border: 1px solid var(--studio-edge);
+  border-radius: 8px;
+  background: linear-gradient(110deg, #7b98b00c, transparent);
+  box-shadow: inset 0 1px 0 #ffffff06;
+  transition:
+    background 0.3s,
+    border-color 0.3s,
+    transform 0.35s var(--studio-ease);
+}
+body.design-studio .context-level:hover {
+  background: #67dfda0a;
+  border-color: #67dfda44;
+  transform: translateX(-2px);
+}
+body.design-studio .context-level span {
+  font-size: 11px;
+}
+body.design-studio .context-level b {
+  font-size: 13px;
+  font-weight: 500;
+}
+body.design-studio .context-level small {
+  font-size: 10px;
+}
+body.design-studio input[type="checkbox"] {
+  accent-color: #54cfc2;
+}
+body.design-studio #context-level-note,
+body.design-studio #offscreen-levels {
+  font-size: 10px;
+  line-height: 1.6;
+  margin-top: 8px;
+}
+body.design-studio #essential-context {
+  padding: 18px 14px;
+}
+body.design-studio #essential-context header {
+  font-size: 10px;
+  letter-spacing: 0.13em;
+}
+body.design-studio #essential-context header > span {
+  font-size: 9px;
+  letter-spacing: 0.02em;
+}
+body.design-studio .essential-stat {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--studio-edge);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 9px;
+  gap: 7px;
+  background: linear-gradient(135deg, #6eb6b00c, #6c8ba703);
+  box-shadow: inset 0 1px 0 #ffffff08;
+}
+body.design-studio .essential-stat > span {
+  font-size: 10px;
+}
+body.design-studio .essential-stat > b {
+  font-size: 20px;
+  letter-spacing: -0.04em;
+  font-weight: 500;
+}
+body.design-studio #essential-regime {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+body.design-studio #essential-gex {
+  color: var(--studio-accent);
+  font-size: 26px;
+}
+body.design-studio #essential-move {
+  color: #e4c989;
+}
+body.design-studio #essential-source {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  padding: 4px 2px;
+}
+body.design-studio #essential-source > div {
+  margin: 0;
+  min-width: 0;
+}
+body.design-studio #essential-source > div:first-child {
+  grid-column: 1 / -1;
+}
+body.design-studio #essential-source b {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+body.design-studio #essential-context p {
+  font-size: 10px;
+  line-height: 1.6;
+}
+body.design-studio #flow-inspector {
+  background: linear-gradient(120deg, #64bab008, transparent 60%), var(--bg2);
+  border-top-color: var(--studio-edge);
+}
+body.design-studio #flow-metrics > div {
+  border-radius: 6px;
+  background: linear-gradient(130deg, #789bb00c, #789bb003);
+  box-shadow: inset 0 1px 0 #ffffff06;
+}
+body.design-studio #flow-metrics strong {
+  font-variant-numeric: tabular-nums;
+}
+body.design-studio dialog {
+  box-shadow:
+    0 32px 100px #0009,
+    0 0 0 1px #67dfda13;
+}
+body.design-studio dialog::backdrop {
+  background: #040a13aa;
+  backdrop-filter: blur(7px);
+}
+.motion-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  color: var(--muted);
+  font: 10px var(--mono);
+  white-space: nowrap;
+}
+.motion-control select {
+  font-size: 10px;
+  padding: 4px 6px;
+  max-width: 115px;
+}
+.motion-orbit {
+  width: 11px;
+  height: 11px;
+  border: 1px solid #67dfda44;
+  border-radius: 50%;
+  border-top-color: var(--studio-accent);
+  display: inline-block;
+}
+
+/* Rich motion: decorative, never indicative of transactions or data freshness. */
+@keyframes studio-breathe {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 1px 0 #b0fff222,
+      0 0 12px #40cbbb08;
+  }
+  50% {
+    box-shadow:
+      inset 0 1px 0 #b0fff233,
+      0 0 20px #40cbbb25;
+  }
+}
+@keyframes studio-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes studio-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes studio-logo {
+  0%,
+  100% {
+    transform: translateY(0);
+    filter: drop-shadow(0 0 3px #53d6c633);
+  }
+  50% {
+    transform: translateY(-1px);
+    filter: drop-shadow(0 0 7px #53d6c677);
+  }
+}
+@keyframes studio-point {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+body.design-studio[data-motion="rich"] #tabs button.active {
+  animation: studio-breathe 5s ease-in-out infinite;
+}
+body.design-studio[data-motion="rich"] .logo svg {
+  animation: studio-logo 5s ease-in-out infinite;
+}
+body.design-studio[data-motion="rich"] .motion-orbit {
+  animation: studio-orbit 8s linear infinite;
+}
+body.design-studio[data-motion="rich"] .t-spark circle {
+  animation: studio-point 3s ease-in-out infinite;
+}
+body.design-studio:not([data-motion="off"]) #tabs button {
+  animation: studio-arrive 0.6s var(--studio-ease) both;
+}
+body.design-studio:not([data-motion="off"]) #tabs button:nth-child(2n) {
+  animation-delay: 0.07s;
+}
+body.design-studio:not([data-motion="off"]) #tabs button:nth-child(3n) {
+  animation-delay: 0.13s;
+}
+body.design-studio:not([data-motion="off"]) #context-rail,
+body.design-studio:not([data-motion="off"]) #essential-context {
+  animation: studio-arrive 0.65s 0.1s var(--studio-ease) both;
+}
+body.design-studio:not([data-motion="off"]) dialog[open] {
+  animation: studio-arrive 0.3s var(--studio-ease) both;
+}
+body.design-studio[data-motion="rich"] #tabs button:hover .instrument-mark {
+  transform: translateY(-2px) scale(1.09);
+}
+body.design-studio .instrument-mark {
+  transition: transform 0.4s var(--studio-ease);
+}
+body.design-studio.motion-paused *,
+body.design-studio.motion-paused *::before,
+body.design-studio.motion-paused *::after {
+  animation-play-state: paused !important;
+}
+body.design-studio[data-motion="off"] *,
+body.design-studio[data-motion="off"] *::before,
+body.design-studio[data-motion="off"] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  body.design-studio *,
+  body.design-studio *::before,
+  body.design-studio *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+@media (max-width: 1500px) {
+  body.design-studio #market-status #et-clock {
+    display: none;
+  }
+  body.design-studio .top-right {
+    gap: 6px;
+  }
+  body.design-studio .brand-text span {
+    font-size: 11px;
+  }
+}
+@media (max-width: 1180px) {
+  body.design-studio .motion-control {
+    margin-left: 0;
+  }
+}
+@media (max-width: 700px) {
+  body.design-studio #topbar {
+    padding: 8px 10px;
+  }
+  body.design-studio #tabs button {
+    min-width: 120px;
+    max-width: 150px;
+  }
+  body.design-studio #workspace-bar {
+    gap: 7px;
+    padding: 8px 10px;
+  }
+  body.design-studio .motion-control {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  body.design-studio #context-rail,
+  body.design-studio #essential-context {
+    padding: 16px;
+  }
+  body.design-studio #essential-source {
+    grid-template-columns: 1fr 1fr;
+  }
+  body.design-studio #chart-toolbar .hero-instrument-mark {
+    width: 23px;
+    height: 23px;
+  }
+}
+
+body.design-studio #tabs .t-px,
+body.design-studio #tabs .t-chg {
+  white-space: nowrap;
+}
+body.design-studio.essential #hero-spark {
+  display: block;
+  opacity: 0.14;
+  pointer-events: none;
+}
+body.design-studio .hero-instrument-mark {
+  position: relative;
+  z-index: 1;
+}
+body.design-studio[data-motion="rich"] .essential-stat:hover {
+  border-color: #67dfda66;
+  background: linear-gradient(115deg, #67dfda13, #7b98b005);
+}

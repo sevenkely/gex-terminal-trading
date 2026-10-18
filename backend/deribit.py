@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from storage import write_json
 import logging
 import os
 import time
@@ -139,10 +140,7 @@ def fetch_chain(symbol: str = "BTC", force: bool = False) -> dict:
         "options": rows,
     }
     raw["iv30"] = _iv30(rows, ts)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(raw, f)
-    os.replace(tmp, path)
+    write_json(path, raw)
     return raw
 
 
@@ -280,6 +278,7 @@ class DeribitFeed:
                     continue
                 self.on_trade(kind, ts, float(t.get("price") or 0), amount,
                               t.get("direction"), t.get("instrument_name") or "",
-                              float(t.get("index_price") or self.price or 0))
+                              float(t.get("index_price") or self.price or 0),
+                              trade_id=t.get("trade_id"), iv=t.get("iv"))
             except (TypeError, KeyError, ValueError):
                 continue

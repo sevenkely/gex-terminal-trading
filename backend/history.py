@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from storage import write_json
 import os
 import time
 from datetime import datetime
@@ -72,10 +73,7 @@ async def fetch_history(symbol: str, interval: str = "1d") -> list[dict]:
         except Exception:  # noqa: BLE001
             bars = []
         if bars:
-            tmp = path + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(bars, f)
-            os.replace(tmp, path)
+            write_json(path, bars)
         return _sanitize(bars)
 
     yiv, yrg, daily = INTERVALS[interval]
@@ -109,10 +107,7 @@ async def fetch_history(symbol: str, interval: str = "1d") -> list[dict]:
     bars = [dedup[k] for k in sorted(dedup, key=str)]
     bars = _sanitize(bars)
 
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(bars, f)
-    os.replace(tmp, path)
+    write_json(path, bars)
     return bars
 
 
@@ -137,12 +132,11 @@ def fetch_quote(symbol: str) -> dict:
                             or meta.get("previousClose")
                             or meta["regularMarketPrice"]),
         "ts": meta.get("regularMarketTime"),
+        "instrument": meta.get("symbol") or YF_SYMBOLS[symbol],
+        "provider":"yahoo",
     }
     os.makedirs(CACHE_DIR, exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(out, f)
-    os.replace(tmp, path)
+    write_json(path, out)
     return out
 
 

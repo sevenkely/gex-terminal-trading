@@ -1,7 +1,7 @@
 # Identifiants locaux (RITHMIC_USER / RITHMIC_PASS / …)
 .env
 
-# Config remplie depuis l'interface : contient le mot de passe Rithmic en clair
+# Configuration locale Rithmic (ne jamais versionner)
 data/rithmic_config.json
 
 # Données de marché en cache, journaux et artefacts
@@ -22,3 +22,14 @@ venv/
 
 # Dossier dupliqué accidentellement créé (copies des rendus, non versionné)
 gex-dashboard/
+
+# Local test tools and browser artifacts
+.cache/
+.pytest_cache/
+
+# React dependencies and generated build
+node_modules/
+terminal-react/dist/
+*.tsbuildinfo
+
+coverage/

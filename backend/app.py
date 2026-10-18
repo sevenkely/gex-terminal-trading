@@ -9,7 +9,7 @@ Data:
   - Yahoo Finance                           -> candles + futures quotes
   - Deribit (public API, no key)            -> BTC : chaîne d'options, spot,
     candles et tape temps réel (perp + options) -> see deribit.py
-  - Live feed: SIM (default) or RITHMIC     -> see live_feed.py / README
+  - Live feed: DELAYED (default), SIM opt-in or RITHMIC     -> see live_feed.py / README
 
 Futures (ES/NQ/GC) display the GEX of their cash underlying (SPX/NDX/GLD)
 projected onto the futures scale via the live basis (additive) or ratio
@@ -22,14 +22,26 @@ import dataclasses
 import logging
 import os
 import time
+import math
+import threading
 from collections import deque
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from access import COOKIE, viewer_authorized, build_access_router, RequestLimits, BodyLimitMiddleware
+from operations import Metrics
+from security import admin_authorized, allowed_origin, validate_gateway, RithmicConfig
+from research_routes import build_research_router
+from market_calendar import session_info
+from pricing import assumptions
+from event_journal import EventRecorder
+from option_ingest import LicensedOptionTape, build_ingest_router
 
 import numpy as np
 import basis as basis_mod
@@ -39,6 +51,8 @@ import derivs as derivs_mod
 import flow as flow_mod
 import gex
 import history
+import provider_status
+from research import OptionTape, ResearchStore
 import rithmic_gateways
 from env_file import load_env
 from live_feed import PriceEngine
@@ -74,11 +88,29 @@ load_env()   # .env → os.environ avant la création du bridge (priorité sur l
 
 STATE: dict = {"chains": {}, "fmap": {}, "tick_count": {}, "zero_cache": {},
                "alerts": {s: deque(maxlen=60) for s in SYMBOLS},
-               "alert_seq": 0, "alert_sides": {}, "alert_cooldown": {}}
+               "alert_seq": 0, "alert_sides": {}, "alert_levels": {}, "alert_cooldown": {}}
 engine = PriceEngine()
 bridge = RithmicBridge(engine)
-crypto_flow = flow_mod.OrderFlowEngine()   # tape BTC (perp + options Deribit)
+from flow_store import FlowStore
+crypto_flow = flow_mod.OrderFlowEngine(FlowStore(os.path.join(os.path.dirname(__file__), "..", "data", "flow.sqlite"), "crypto"))   # tape BTC (perp + options Deribit)
+option_tape = OptionTape()
+licensed_option_tape = LicensedOptionTape()
+research_store = ResearchStore(os.getenv("GEX_RESEARCH_DB") or os.path.join(os.path.dirname(FRONTEND), "data", "research.sqlite3"))
 crypto_feed = deribit.DeribitFeed()
+metrics = Metrics()
+request_limits = RequestLimits()
+http_slots = threading.BoundedSemaphore(128)
+event_recorder = EventRecorder(enabled=os.getenv("GEX_RECORD_EVENTS", "false").lower() in ("1","true","yes"))
+
+
+def record_external_price(symbol, price, ts, mode):
+    contract = bridge.status["contracts"].get(symbol, {})
+    event_recorder.capture(symbol, "price", ts, {
+        "price":price, "mode":mode, "contract":contract.get("contract"),
+        "price_type":"direct_trade" if symbol in FUTURES and contract.get("mode")=="direct" else "index_or_proxy"})
+
+
+engine.on_external = record_external_price
 
 ALERT_LEVELS = [("zero_gex", "ZERO GEX"), ("call_wall", "CALL WALL"),
                 ("put_wall", "PUT WALL")]
@@ -91,20 +123,30 @@ def _update_futures_map() -> None:
         src: gex.Chain | None = STATE["chains"].get(cfg["src"])
         if not src:
             continue
+        q = None
         try:
             q = history.fetch_quote(fut)
-        except Exception:  # noqa: BLE001
-            log.exception("futures quote failed for %s", fut)
-            continue
-        v = (q["price"] - src.spot) if cfg["kind"] == "basis" \
-            else (q["price"] / src.spot)
-        STATE["fmap"][fut] = {
-            "kind": cfg["kind"], "src": cfg["src"], "v": v,
-            "prev_close": q["prev_close"], "qts": q.get("ts"),
-        }
+            cash_q = history.fetch_quote(cfg["src"])
+            pair = basis_mod.synchronized_projection(q, cash_q, cfg["kind"],max_age=1800)
+        except Exception:
+            # Recover the last coherent pair (e.g. cash close during ETH),
+            # preserve its age, and disable alerts when it is stale.
+            try:
+                rows=asyncio.run(basis_mod.basis_series(fut,cfg['src'],cfg['kind']))
+                if not rows: raise ValueError('No aligned bars')
+                last=rows[-1]
+                fq=dict(price=last['future_price'],ts=last['t'],instrument=history.YF_SYMBOLS[fut])
+                cq=dict(price=last['cash_price'],ts=last['t'],instrument=history.YF_SYMBOLS[cfg['src']])
+                pair=basis_mod.synchronized_projection(fq,cq,cfg['kind'],max_age=96*3600)
+                pair['method']='aligned_5m_closes'
+                q=q or dict(price=fq['price'],prev_close=fq['price'])
+            except Exception:
+                log.warning("Projection %s non mise à jour : aucune paire synchronisée",fut)
+                continue
+        STATE["fmap"][fut] = {**pair, "src":cfg["src"], "prev_close":q["prev_close"]}
         engine.rebase(fut, q["price"], src.iv30)
-        log.info("futures %s: %.2f  %s(%s)=%.4f", fut, q["price"],
-                 cfg["kind"], cfg["src"], v)
+        log.info("projection %s (%s): %.4f skew=%.0fs", fut, pair["kind"], pair["v"], pair["skew_seconds"])
+
 
 
 def _aggression(direction: str | None) -> int:
@@ -112,15 +154,17 @@ def _aggression(direction: str | None) -> int:
     return 1 if direction == "buy" else 2 if direction == "sell" else 0
 
 
+@provider_status.tracked("deribit")
 def load_crypto_chain(sym: str, force: bool = False) -> None:
     """Chaîne d'options BTC (Deribit) → STATE + moteur de prix."""
     raw = deribit.fetch_chain(sym, force=force)
     chain = gex.chain_from_deribit(sym, raw)
     STATE["chains"][sym] = chain
+    research_store.record_oi(sym, chain)
     engine.rebase(sym, chain.spot, chain.iv30)
-    # le flux temps réel pilote le prix : SIM seulement si le WS tombe
-    engine.modes[sym] = "DERIBIT"
-    engine.external_ts.setdefault(sym, time.time())
+    # La chaîne ne constitue pas un heartbeat du flux de prix.
+    # A chain refresh is not proof of a live price feed.
+    # Only _crypto_price may mark this symbol DERIBIT live.
     log.info("chaîne %s (Deribit): spot=%.0f iv30=%.1f contrats=%d OI=%.0f BTC",
              sym, chain.spot, chain.iv30, len(chain.strike), chain.oi.sum())
 
@@ -130,7 +174,8 @@ def _crypto_price(px: float, ts: float) -> None:
 
 
 def _crypto_trade(kind: str, ts: float, price: float, amount: float,
-                  side: str | None, instrument: str, index_price: float) -> None:
+                  side: str | None, instrument: str, index_price: float,
+                  trade_id=None, iv=None) -> None:
     """Tape Deribit → flow.py.
 
     Perp : `amount` est déjà un notionnel USD (contrat de 10 $) → la « taille »
@@ -142,16 +187,20 @@ def _crypto_trade(kind: str, ts: float, price: float, amount: float,
     agg = _aggression(side)
     if kind == "options":
         idx = index_price or engine.price("BTC")
+        if not option_tape.add(ts, price, amount, side, instrument, idx, trade_id, iv):
+            return
+        event_recorder.capture("BTC", "option_trade", ts, {"instrument":instrument,
+            "amount":amount,"price_btc":price,"index_price":idx,"side":side,"trade_id":trade_id,"iv":iv})
         premium = amount * price * idx
         if premium <= 0:
             return
         crypto_flow.add_trade(("DERIBIT", "BTC-OPTIONS"), "BTC-OPTIONS", ts,
                               idx, premium, agg, kind="options",
-                              instrument=instrument)
+                              instrument=instrument, trade_id=trade_id)
     else:
         crypto_flow.add_trade(("DERIBIT", deribit.PERP), deribit.PERP, ts,
                               price, amount, agg, kind="perp",
-                              instrument=instrument)
+                              instrument=instrument, trade_id=trade_id)
 
 
 def seed_crypto_flow(count: int = 100) -> None:
@@ -170,10 +219,12 @@ def seed_crypto_flow(count: int = 100) -> None:
             idx = float(t.get("index_price") or 0.0)
             if mode == "options":
                 _crypto_trade("options", ts, float(t.get("price") or 0), amount,
-                              t.get("direction"), t.get("instrument_name") or "", idx)
+                              t.get("direction"), t.get("instrument_name") or "", idx,
+                              trade_id=t.get("trade_id"), iv=t.get("iv"))
             else:
                 _crypto_trade("perp", ts, float(t.get("price") or 0), amount,
-                              t.get("direction"), t.get("instrument_name") or "", idx)
+                              t.get("direction"), t.get("instrument_name") or "", idx,
+                              trade_id=t.get("trade_id"), iv=t.get("iv"))
         log.info("deribit seed %s: %d trades", kind, len(trades))
 
 
@@ -188,10 +239,13 @@ def load_chains(force: bool = False) -> None:
             raw = cboe.fetch_chain(sym, force=force)
             chain = gex.chain_from_cboe(sym, raw)
             STATE["chains"][sym] = chain
+            research_store.record_oi(sym, chain)
             engine.rebase(sym, chain.spot, chain.iv30)
+            provider_status.record("cboe", sym)
             log.info("chain %s: spot=%.2f iv30=%.1f contracts=%d",
                      sym, chain.spot, chain.iv30, len(chain.strike))
-        except Exception:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001
+            provider_status.record("cboe", sym, error)
             log.exception("failed to load chain %s", sym)
     _update_futures_map()
 
@@ -199,6 +253,8 @@ def load_chains(force: bool = False) -> None:
 # --------------------------------------------------------------- GEX helpers
 def _chain_for(sym: str) -> gex.Chain | None:
     if sym in FUTURES:
+        if sym not in STATE["fmap"]:
+            return None  # never draw cash strikes on a futures scale without a mapping
         return STATE["chains"].get(FUTURES[sym]["src"])
     return STATE["chains"].get(sym)
 
@@ -231,6 +287,9 @@ def _transform(res: dict, sym: str) -> dict:
         res["strikes"] = [_from_src(sym, s) for s in res["strikes"]]
     w = res.get("walls")
     if isinstance(w, dict):
+        for key in ("flip", "pain"):
+            if w.get(key) is not None:
+                w[key] = _from_src(sym, w[key])
         for side in ("call", "put"):
             for e in w.get(side, []):
                 e["strike"] = _from_src(sym, e["strike"])
@@ -246,24 +305,71 @@ def _map_desc(sym: str) -> str | None:
     return f"ratio {sym}/{fm['src']} = ×{fm['v']:.3f}"
 
 
+PROFILE_CACHE: dict = {}
+PROFILE_LOCK = threading.Lock()
+
+
 def level_snapshot(sym: str, filt: str, with_zero: bool,
                    win: float = 0.03) -> dict:
+    """Shared per-symbol snapshot, independent of the number of subscribers.
+
+    Full profile + zero share one valuation time. Cache expires after 5 seconds
+    or immediately on a new chain; key includes the wall window.
+    """
     chain = _chain_for(sym)
     if not chain:
         return {}
-    spot_src = _to_src(sym, engine.price(sym))
-    key = (sym, filt)
-    if with_zero:
-        prof = gex.compute_profile(chain, spot_src, filt, compute_zero=True,
-                                   win=win)
-        STATE["zero_cache"][key] = (prof.get("zero_gex"), spot_src, time.time())
-    else:
-        prof = gex.compute_levels(chain, spot_src, filt, compute_zero=False,
-                                  win=win)
-        cached = STATE["zero_cache"].get(key)
-        if cached:
-            prof["zero_gex"] = cached[0]
-    return _transform(prof, sym)
+    key = (sym, filt, round(win, 4))
+    now = time.time()
+    with PROFILE_LOCK:
+        cached = PROFILE_CACHE.get(key)
+        expiry_crossed = cached and np.any((chain.exp_epoch > cached[1]) & (chain.exp_epoch <= now))
+        if cached and cached[0] is chain and now - cached[1] < 5 and not expiry_crossed:
+            return cached[2]
+        spot_src = _to_src(sym, engine.price(sym))
+        prof = _transform(gex.compute_profile(chain, spot_src, filt,
+                          valuation_time=now, win=win), sym)
+        if len(PROFILE_CACHE) >= 256:
+            PROFILE_CACHE.clear()
+        PROFILE_CACHE[key] = (chain, now, prof)
+        return prof
+
+
+def projection_status(sym: str) -> dict | None:
+    mapping = STATE["fmap"].get(sym)
+    if sym not in FUTURES:
+        return None
+    if not mapping:
+        return {"valid":False, "reason":"Aucune paire de cotations synchronisées"}
+    age = max(0, time.time()-mapping.get("qts", 0))
+    return {**mapping, "age_seconds":age, "fresh":age <= 1800,
+            "valid":True, "contract_identity_verified":False}
+
+
+def chain_status(sym: str, filt: str) -> dict:
+    chain = _chain_for(sym)
+    if chain is None:
+        return {}
+    now = time.time()
+    mask = gex._mask_for(chain, filt, now)
+    future = chain.exp_epoch[chain.exp_epoch > now]
+    tz = timezone.utc if sym in CRYPTO_SYMBOLS else gex.ET
+    return {
+        "available": bool(mask.any()),
+        "filtered_contracts": int(mask.sum()),
+        "filtered_oi": float(chain.oi[mask].sum()),
+        "filter": filt,
+        "timezone": "UTC" if sym in CRYPTO_SYMBOLS else "America/New_York",
+        "valuation_date": datetime.fromtimestamp(now, tz).date().isoformat(),
+        "next_expiry": float(future.min()) if len(future) else None,
+        "chain_age_seconds": max(0, now - chain.ts_epoch),
+        "chain_ts_epoch": chain.ts_epoch,
+        "oi_reference": "Date OI non fournie par la source" if sym not in CRYPTO_SYMBOLS else "OI snapshot Deribit",
+        "session":session_info(sym),
+        "model_inputs":assumptions(chain),
+        "projection":projection_status(sym),
+        "methodology": "GEX estimé : calls + / puts − ; positionnement dealer non observé",
+    }
 
 
 # ---------------------------------------------------------------- alerts
@@ -276,10 +382,15 @@ async def alert_loop():
             if _chain_for(sym) is None:
                 continue
             price = engine.price(sym)
+            projection = projection_status(sym)
+            if engine.mode_for(sym) not in ("RITHMIC", "DERIBIT") or (projection and not projection.get("fresh")):
+                for key, _ in ALERT_LEVELS:
+                    STATE["alert_sides"].pop((sym, key), None)
+                continue
             if not price:
                 continue
             try:
-                lv = level_snapshot(sym, "all", with_zero=False)
+                lv = await asyncio.to_thread(level_snapshot, sym, "all", False)
             except Exception:  # noqa: BLE001
                 continue
             for key, label in ALERT_LEVELS:
@@ -289,6 +400,9 @@ async def alert_loop():
                 side = 1 if price > lvl else (-1 if price < lvl else 0)
                 sk = (sym, key)
                 prev = STATE["alert_sides"].get(sk)
+                if STATE["alert_levels"].get(sk) != lvl:
+                    prev = None  # changing a wall is not a price crossing
+                STATE["alert_levels"][sk] = lvl
                 STATE["alert_sides"][sk] = side
                 if prev in (1, -1) and side in (1, -1) and side != prev \
                         and now - STATE["alert_cooldown"].get(sk, 0) >= ALERT_COOLDOWN:
@@ -299,6 +413,10 @@ async def alert_loop():
                         "seq": STATE["alert_seq"], "ts": now, "level": key,
                         "label": label, "level_price": round(lvl, 2),
                         "price": round(price, 2), "direction": direction,
+                        "symbol": sym, "filter": "all", "price_mode": engine.mode_for(sym),
+                        "contract": (bridge.flow_key(sym) or (None, None))[1],
+                        "chain_ts": _chain_for(sym).ts_epoch,
+                        "projection_fresh": projection.get("fresh") if projection else None,
                         "text": f"{sym} franchit {label} {direction} — niveau "
                                 f"{lvl:,.2f} · prix {price:,.2f}",
                     })
@@ -307,29 +425,58 @@ async def alert_loop():
 
 
 # --------------------------------------------------------------------- server
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+async def rollover_loop():
+    while True:
+        try:
+            await bridge.check_rollover()
+        except Exception:
+            log.warning("Rollover check unavailable")
+        await asyncio.sleep(900)
+
+
+async def heartbeat_loop():
+    previous=time.monotonic()
+    while True:
+        await asyncio.sleep(1)
+        now=time.monotonic()
+        metrics.loop_lag=max(0,now-previous-1)
+        metrics.last_heartbeat=time.time()
+        previous=now
+
+
+async def initial_load():
+    # API/static UI starts immediately; slow public providers must not block boot.
     await asyncio.to_thread(load_chains)
     await asyncio.to_thread(save_snapshots)
     STATE["next_refresh"] = time.time() + CHAIN_REFRESH
-    if bridge.config.get("enabled") and bridge.config.get("auto_connect") \
-            and bridge.config.get("user"):
-        await bridge.connect()
     await asyncio.to_thread(seed_crypto_flow)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if bridge.config.get("enabled") and bridge.config.get("auto_connect") and bridge.config.get("user"):
+        await bridge.connect()
     crypto_feed.on_price = _crypto_price
     crypto_feed.on_trade = _crypto_trade
-    tasks = [
-        asyncio.create_task(engine.run_sim()),
-        asyncio.create_task(refresh_loop()),
-        asyncio.create_task(crypto_refresh_loop()),
-        asyncio.create_task(alert_loop()),
-        asyncio.create_task(crypto_feed.run()),
-    ]
+    tasks = [asyncio.create_task(coro) for coro in (
+        initial_load(), engine.run_sim(), refresh_loop(), crypto_refresh_loop(),
+        alert_loop(), research_loop(), record_loop(), flow_checkpoint_loop(), heartbeat_loop(), rollover_loop(), crypto_feed.run())]
     yield
-    for t in tasks:
-        t.cancel()
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.to_thread(crypto_flow.checkpoint)
+    await asyncio.to_thread(bridge.flow.checkpoint)
     if bridge.client:
         await bridge.disconnect("Arrêt du serveur")
+    for _ in range(10):
+        if not event_recorder.status()['queued']:
+            break
+        try:
+            await asyncio.to_thread(event_recorder.flush,research_store)
+        except Exception:
+            log.error("Final journal flush failed; recording is incomplete")
+            break
 
 
 async def refresh_loop():
@@ -355,9 +502,52 @@ async def crypto_refresh_loop():
 
 
 app = FastAPI(title="GEX Terminal", lifespan=lifespan)
+app.add_middleware(BodyLimitMiddleware)
+app.add_middleware(TrustedHostMiddleware,allowed_hosts=[h.strip() for h in os.getenv("GEX_ALLOWED_HOSTS","*").split(",") if h.strip()])
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+    CORSMiddleware,
+    allow_origins=[s.strip() for s in os.getenv("GEX_ALLOWED_ORIGINS", "").split(",") if s.strip()],
+    allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Authorization"]
 )
+
+
+@app.middleware("http")
+async def protect_api(request, call_next):
+    started=time.monotonic()
+    if not request.url.path.startswith('/api/'):
+        return await call_next(request)
+    ip=request.client.host if request.client else 'unknown'
+    path=request.url.path
+    group='login' if path=='/api/session' else 'evaluation' if path.startswith('/api/backtest/') else 'ingest' if path.startswith('/api/ingest/') else 'general'
+    if not request_limits.allow(ip,group):
+        metrics.observe(429,time.monotonic()-started)
+        return JSONResponse({'detail':'Quota dépassé, réessayer dans une minute'},status_code=429,headers={'Retry-After':'60'})
+    public=request.method=='OPTIONS' or path in ('/api/access','/api/session','/api/health') or path.startswith('/api/ingest/')
+    if not public and not viewer_authorized(request.headers.get('authorization',''),request.cookies.get(COOKIE)):
+        metrics.observe(401,time.monotonic()-started)
+        return JSONResponse({'detail':'Authentification de lecture requise'},status_code=401)
+    if path.startswith('/api/rithmic') and request.method!='OPTIONS' and not admin_authorized(request.headers.get('authorization','')):
+        return JSONResponse({'detail':'Administration verrouillée : GEX_ADMIN_TOKEN requis'},status_code=401)
+    if (path.startswith('/api/rithmic') or request.method not in ('GET','HEAD','OPTIONS')) and request.method!='OPTIONS' and not allowed_origin(request.headers.get('origin'),request.headers.get('host',''),request.url.scheme):
+        return JSONResponse({'detail':'Origine non autorisée'},status_code=403)
+    try:
+        too_large=int(request.headers.get('content-length','0'))>2*1024*1024
+    except ValueError:
+        return JSONResponse({'detail':'Invalid Content-Length'},status_code=400)
+    if too_large:
+        return JSONResponse({'detail':'Payload trop volumineux'},status_code=413)
+    if not http_slots.acquire(blocking=False):
+        return JSONResponse({'detail':'Serveur occupé'},status_code=503)
+    status=500
+    try:
+        response=await call_next(request)
+        status=response.status_code
+        response.headers['Cache-Control']='no-store'
+        response.headers['X-Content-Type-Options']='nosniff'
+        return response
+    finally:
+        http_slots.release()
+        metrics.observe(status,time.monotonic()-started)
 
 
 @app.middleware("http")
@@ -374,17 +564,70 @@ SPARK_CACHE: dict = {}
 
 
 async def _spark(sym: str) -> list:
+    if _chain_for(sym) is None:
+        return []
     now = time.time()
     c = SPARK_CACHE.get(sym)
     if c and now - c[0] < 300:
         return c[1]
     try:
-        bars = await history.fetch_history(sym, "5m")
+        bars = await asyncio.wait_for(history.fetch_history(sym, "5m"), timeout=5)
         vals = [round(b["close"], 4) for b in bars[-40:]]
     except Exception:
         vals = []
     SPARK_CACHE[sym] = (now, vals)
     return vals
+
+
+@app.get('/api/diagnostics')
+def diagnostics():
+    operational=metrics.snapshot(research_store.path)
+    recording=event_recorder.status()
+    alerts=[]
+    if operational['disk_free_bytes']<200*1024*1024: alerts.append('low_disk_space')
+    if operational['loop_lag_seconds']>1: alerts.append('event_loop_lag')
+    if recording['dropped'] or recording['failures']: alerts.append('incomplete_event_recording')
+    sources={sym:chain_status(sym,'all') for sym in TABS if _chain_for(sym)}
+    for sym in TABS:
+        if sym not in sources: alerts.append(f'{sym}:missing_chain_or_projection')
+    for sym,source in sources.items():
+        if source['chain_age_seconds']>(180 if sym=='BTC' else 1800): alerts.append(f'{sym}:stale_chain')
+        if engine.mode_for(sym)=='STALE': alerts.append(f'{sym}:stale_price')
+        if source.get('projection') and not source['projection'].get('fresh'): alerts.append(f'{sym}:stale_projection')
+    return dict(operational=operational,recording=recording,sources=sources,alerts=alerts,
+                licensed_options=licensed_option_tape.status(),
+                live_acceptance='not_signed_off',rollover=bridge.status.get("rollover",{"policy":"manual_reconnect","checked_at":None}))
+
+
+@app.get('/api/metrics',response_class=PlainTextResponse)
+def operational_metrics():
+    data=metrics.snapshot(research_store.path)
+    return '\n'.join([f'gex_{key} {value}' for key,value in data.items() if isinstance(value,(int,float))])+f'\ngex_recording_dropped {event_recorder.status()["dropped"]}\n'
+
+
+@app.get("/api/data-status")
+def api_data_status():
+    """Source readiness, not just process liveness. No network probes on requests."""
+    return {
+        "demo": os.getenv("GEX_DEMO_MODE", "").lower() in ("1", "true", "yes"),
+        "ready_symbols": [s for s in TABS if _chain_for(s)],
+        "attempts": provider_status.snapshot(),
+        "feeds": {"deribit": {"state": crypto_feed.status["state"]},
+                  "rithmic": {"state": bridge.status["state"]}},
+        "providers": [
+            {"name": "Deribit", "hosts": ["www.deribit.com"], "transport": "HTTPS et WSS / 443", "coverage": "BTC : prix, options, bougies, tape public"},
+            {"name": "CBOE", "hosts": ["cdn.cboe.com"], "transport": "HTTPS / 443", "coverage": "Chaînes actions différées"},
+            {"name": "Yahoo", "hosts": ["query1.finance.yahoo.com"], "transport": "HTTPS / 443", "coverage": "Bougies et prix publics différés"}],
+        "guidance": "Une connexion TLS/HTTP refusée nécessite un hébergement autorisant ces fournisseurs. Aucun fallback en simulation. Les prix actions live nécessitent les droits market data correspondants.",
+    }
+
+
+@app.get("/api/health")
+def api_health():
+    return {"status":"ready" if STATE["chains"] else "waiting_for_data",
+            "symbols":list(STATE["chains"]),
+            "modes":{s:engine.mode_for(s) for s in TABS},
+            "demo":os.getenv("GEX_DEMO_MODE", "").lower() in ("1", "true", "yes")}
 
 
 @app.get("/api/symbols")
@@ -409,6 +652,7 @@ async def api_symbols():
             "contracts": int(len(chain.strike)),
             "chain_ts": chain.ts,
             "mode": engine.mode_for(sym),
+            "session":session_info(sym),
             "gex_source": fm["src"] if fm else None,
             "map_desc": _map_desc(sym),
             "spark": list(sp) if isinstance(sp, list) else [],
@@ -426,8 +670,28 @@ def _next_refresh(sym: str) -> float | None:
     return STATE.get("next_refresh")
 
 
+@app.get('/api/exposure/{symbol}')
+def api_exposure(symbol: str, filter: str = Query('all',pattern='^(all|0dte|weekly|monthly)$'),
+                 metric: str = Query('gamma',pattern='^(gamma|vanna)$'),
+                 band: float = Query(.05,ge=.01,le=.15,allow_inf_nan=False)):
+    from exposure import grid
+    sym=symbol.upper();chain=_chain_for(sym)
+    if chain is None: return dict(available=False,reason='Chaîne ou projection indisponible')
+    spot=_to_src(sym,engine.price(sym))
+    if not math.isfinite(spot) or spot<=0: return dict(available=False,reason='Prix de référence indisponible')
+    result=grid(chain,spot,filter,metric,band)
+    mapping=STATE['fmap'].get(sym)
+    if mapping:
+        result['model_spot']=result['spot']
+        result['unit']+=' (sous-jacent cash, projection non native futures)'
+        result['strikes']=[k+mapping['v'] if mapping['kind']=='basis' else k*mapping['v'] for k in result['strikes']]
+        result['spot']=engine.price(sym)
+    return {**result,'symbol':sym,'meta':chain_status(sym,filter),'price_mode':engine.mode_for(sym),
+            'source_symbol':FUTURES.get(sym,{}).get('src',sym)}
+
+
 @app.get("/api/gex/{symbol}")
-def api_gex(symbol: str, filter: str = "all", win: float = Query(3.0)):
+def api_gex(symbol: str, filter: str = "all", win: float = Query(3.0, ge=0.5, le=15, allow_inf_nan=False)):
     sym = symbol.upper()
     chain = _chain_for(sym)
     if not chain:
@@ -436,15 +700,16 @@ def api_gex(symbol: str, filter: str = "all", win: float = Query(3.0)):
     win = min(max(win, 0.5), 15.0) / 100.0
     px = engine.price(sym)
     spot_src = _to_src(sym, px)
-    prof = _transform(gex.compute_profile(chain, spot_src, filt,
-                                          compute_zero=True, win=win), sym)
+    prof = level_snapshot(sym, filt, True, win)
     fm = STATE["fmap"].get(sym)
     prev = fm["prev_close"] if fm else chain.prev_close
     return {
         "symbol": sym,
         "filter": filt,
         "meta": {
+            **chain_status(sym, filt),
             "spot": px,
+            "price_ts": engine.external_ts.get(sym),
             "delayed_spot": chain.spot if not fm else engine.base.get(sym, px),
             "cash_spot": spot_src if fm else None,
             "prev_close": prev,
@@ -460,8 +725,10 @@ def api_gex(symbol: str, filter: str = "all", win: float = Query(3.0)):
 
 
 @app.get("/api/scenario/{symbol}")
-async def api_scenario(symbol: str, dspot: float = 0.0, div: float = 0.0,
-                       filter: str = "all"):
+async def api_scenario(symbol: str, dspot: float = Query(0.0, ge=-0.1, le=0.1, allow_inf_nan=False),
+                       div: float = Query(0.0, ge=-15, le=15, allow_inf_nan=False),
+                       filter: str = "all",
+                       minutes: float = Query(0, ge=0, le=1440, allow_inf_nan=False)):
     """Re-price la chaîne du jour (OI inchangé) à un spot hypothétique
     (dspot, fraction relative) et/ou une IV décalée (div, points de vol).
     Renvoie le profil GEX complet + niveaux reconstruits."""
@@ -475,12 +742,14 @@ async def api_scenario(symbol: str, dspot: float = 0.0, div: float = 0.0,
     px = engine.price(sym)
     ch = chain
     if abs(div) > 1e-9:
-        ch = dataclasses.replace(chain, iv=np.clip(chain.iv + div / 100.0, 0.02, 3.0))
+        ch = dataclasses.replace(chain, iv=np.clip(chain.iv + div / 100.0, 0.02, 3.0),
+                                 iv30=max(0, chain.iv30 + div))
     spot_src = _to_src(sym, px) * (1 + dspot)
     prof = await asyncio.to_thread(
         lambda: _transform(gex.compute_profile(ch, spot_src, filt,
-                                               compute_zero=True), sym))
-    return {"symbol": sym, "dspot": dspot, "div": div, "filter": filt, **prof}
+                                               compute_zero=True,
+                                               valuation_time=time.time() + minutes * 60), sym))
+    return {"symbol": sym, "dspot": dspot, "div": div, "minutes":minutes, "filter": filt, **prof}
 
 
 @app.get("/api/derivs/{symbol}")
@@ -501,6 +770,7 @@ async def api_history(symbol: str, interval: str = "1d"):
     try:
         bars = await history.fetch_history(symbol.upper(), interval)
     except Exception as e:  # noqa: BLE001
+        provider_status.record("deribit" if symbol.upper()=="BTC" else "yahoo", symbol.upper(), e)
         log.exception("history fetch failed")
         return {"error": str(e)}
     return {"symbol": symbol.upper(), "interval": interval, "bars": bars}
@@ -554,11 +824,17 @@ def save_snapshots() -> None:
         if chain is None:
             continue
         try:
-            prof = gex.compute_profile(chain, chain.spot, "all", compute_zero=False)
+            prof = gex.compute_profile(chain, chain.spot, "all", compute_zero=True,
+                                       valuation_time=chain.ts_epoch)
             prof = _transform(prof, tab)
             spot = _from_src(tab, chain.spot) if tab in FUTURES else chain.spot
             line = {
                 "ts": round(time.time(), 1),
+                "schema_version": 2,
+                "chain_ts": chain.ts_epoch,
+                "source": FUTURES.get(tab, {}).get("src", tab),
+                "filter": "all",
+                "methodology": "estimated_calls_positive_puts_negative",
                 "spot": round(spot, 2),
                 "strikes": [round(s, 2) for s in prof["strikes"]],
                 "netM": [round(v / 1e6, 3) for v in prof["net_gex"]],  # en millions $
@@ -583,7 +859,7 @@ HM_CACHE: dict = {}
 
 @app.get("/api/heatmap/{symbol}")
 async def api_heatmap(symbol: str, mode: str = "session", interval: str = "5m",
-                      rng: float = Query(0.05, alias="range"), filter: str = "all"):
+                      rng: float = Query(0.05, alias="range", ge=0.01, le=0.15, allow_inf_nan=False), filter: str = "all"):
     import json as _json
     sym = symbol.upper()
     chain = _chain_for(sym)
@@ -598,6 +874,8 @@ async def api_heatmap(symbol: str, mode: str = "session", interval: str = "5m",
 
     px = engine.price(sym)
     if mode == "hist":
+        if filt != "all":
+            return {"available": False, "reason": "Les snapshots historiques enregistrés couvrent ALL uniquement. Choisir ALL ; aucun filtre ne sera simulé."}
         p = _hist_path(sym)
         rows = []
         if os.path.exists(p):
@@ -615,7 +893,7 @@ async def api_heatmap(symbol: str, mode: str = "session", interval: str = "5m",
             rows = [rows[int(i * step)] for i in range(180)] + [rows[-1]]
         strikes = rows[-1]["strikes"]
         smap = [{s: v for s, v in zip(r["strikes"], r["netM"])} for r in rows]
-        matrix = [[m.get(s, 0.0) for s in strikes] for m in smap]   # lignes=temps
+        matrix = [[m.get(s) for s in strikes] for m in smap]   # lignes=temps
         times = [r["ts"] for r in rows]
         spot_path = [r["spot"] for r in rows]
         cw_path = [r.get("cw") for r in rows]
@@ -633,7 +911,7 @@ async def api_heatmap(symbol: str, mode: str = "session", interval: str = "5m",
         def _etday(b):
             return datetime.fromtimestamp(b["time"], timezone.utc).astimezone(etz).date()
         days = sorted({_etday(b) for b in bars}, reverse=True)
-        keep_days = days[:1] if len([b for b in bars if _etday(b) == days[0]]) >= 12 else days[:2]
+        keep_days = days[:1]
         bars = [b for b in bars if _etday(b) in keep_days]
         spots_disp = [b["close"] for b in bars]
         spots_src = [_to_src(sym, s) for s in spots_disp]
@@ -650,7 +928,10 @@ async def api_heatmap(symbol: str, mode: str = "session", interval: str = "5m",
     if len(keep) < 8:
         keep = list(range(len(strikes)))
     out = {
-        "available": True, "mode": mode, "unit": unit,
+        "available": bool(len(strikes)), "mode": mode, "unit": unit,
+        "reason": None if len(strikes) else "Aucun strike disponible pour ce filtre.",
+        "provenance": "recorded_snapshots" if mode == "hist" else "reconstructed_current_chain",
+        "limitation": "OI, IV et temps du snapshot constants ; pas un historique observé" if mode != "hist" else "Snapshots ALL enregistrés à partir de chaînes différées",
         "times": times,
         "strikes": [strikes[i] for i in keep],
         "matrix": [[row[i] for i in keep] for row in matrix],  # lignes = temps
@@ -660,6 +941,8 @@ async def api_heatmap(symbol: str, mode: str = "session", interval: str = "5m",
         out["cw"] = cw_path
         out["pw"] = pw_path
         out["fl"] = fl_path
+    if len(HM_CACHE) > 128:
+        HM_CACHE.clear()
     HM_CACHE[key] = (now, out)
     return out
 
@@ -695,38 +978,95 @@ def api_flow(symbol: str, src: str = "perp"):
                 "reason": "Flux d'ordres : nécessite un compte Rithmic connecté "
                           "(les ticks SIM n'ont ni tape ni carnet)."}
     data["available"] = True
+    data["live"] = engine.mode_for(sym) == "RITHMIC"
     return data
 
 
 @app.get("/api/flow/{symbol}/bars")
-def api_flow_bars(symbol: str, interval: str = "5m", limit: int = 240,
-                  src: str = "perp"):
+def api_flow_bars(symbol: str, interval: str = Query("5m", pattern="^(30s|1m|5m|15m|30m|1h|1d)$"), limit: int = 240,
+                  src: str = "perp", offset: int = Query(0, ge=0, le=1800)):
     """Delta agressif et CVD par bougie (bande basse du graphique).
 
     Même source que `/api/flow/{sym}` : tape Deribit pour BTC (`src=perp` ou
     `options`), tape Rithmic pour les futures. Ne remonte que ce qui a été vu
-    depuis le démarrage du serveur — pas de backfill historique.
+    depuis les observations reçues/restaurées localement — pas de backfill synthétique.
     """
     sym = symbol.upper()
     if sym not in SYMBOLS:
         return {"available": False, "reason": "symbole inconnu"}
+    if offset not in (0, 1800) or (offset and interval != "1h"):
+        raise HTTPException(status_code=422, detail="offset=1800 is supported only for 1h cash-aligned bars")
+    bucket = "1h@1800" if offset else interval
     limit = max(20, min(int(limit), 420))
     if sym in CRYPTO_SYMBOLS:
         contract = "BTC-OPTIONS" if src == "options" else deribit.PERP
-        bars = crypto_flow.bars(("DERIBIT", contract), interval, limit)
+        bars = crypto_flow.bars(("DERIBIT", contract), bucket, limit)
         unit = "USD"
+        snap = crypto_flow.get(("DERIBIT", contract)) or {}
     else:
-        bars = bridge.get_flow_bars(sym, interval, limit)
+        bars = bridge.get_flow_bars(sym, bucket, limit)
         snap = bridge.get_flow(sym) or {}
         unit = snap.get("unit", "contrats")
+    key = ("DERIBIT", contract) if sym in CRYPTO_SYMBOLS else bridge.flow_key(sym)
+    flow_engine = crypto_flow if sym in CRYPTO_SYMBOLS else bridge.flow
     return {
+        "diagnostics": flow_engine.diagnostics(key, bucket),
+        "contract": key[1] if key else None, "exchange": key[0] if key else None,
         "available": bool(bars),
-        "symbol": sym, "interval": interval, "unit": unit,
+        "symbol": sym, "interval": interval, "offset_s": offset, "unit": unit,
         "bars": bars,
+        "retention_bars": 420,
+        "first_observed_ts": snap.get("coverage_start"),
+        "retained_from": bars[0]["t"] if bars else None,
+        "last_observed_ts": snap.get("last_ts"),
+        "coverage": "Observed tape with local checkpoints, bounded to 420 bars per contract/interval; "
+                    "no synthetic backfill. Absorption totals belong to the detection candle; "
+                    "same-side windows are disjoint.",
         "reason": None if bars else
                   ("Le tape se remplit depuis le démarrage du serveur : "
                    "aucune bougie pour l'instant."),
     }
+
+
+async def flow_checkpoint_loop():
+    while True:
+        await asyncio.sleep(5)
+        await asyncio.to_thread(crypto_flow.checkpoint)
+        await asyncio.to_thread(bridge.flow.checkpoint)
+
+
+async def record_loop():
+    while True:
+        try:
+            await asyncio.to_thread(event_recorder.flush, research_store)
+        except Exception:
+            log.exception("Event recording failed; coverage is incomplete")
+        await asyncio.sleep(1)
+
+
+async def research_loop():
+    """Sample known levels every 30s, preserving availability times and source age."""
+    while True:
+        try:
+            rows = []
+            for sym in TABS:
+                chain = _chain_for(sym)
+                if chain is None or engine.mode_for(sym) == "SIM":
+                    continue
+                for filt in ("all", "0dte", "weekly", "monthly"):
+                    prof = await asyncio.to_thread(level_snapshot, sym, filt, True)
+                    levels = {k:prof.get(k) for k in ("spot", "call_wall", "put_wall", "zero_gex", "gamma_flip", "max_pain", "net_gex_total", "regime", "walls", "available")}
+                    rows.append({"symbol":sym, "filter":filt, "recorded_at":time.time(),
+                        "chain_ts":chain.ts_epoch, "valuation_time":prof.get("valuation_time"),
+                        "price":engine.price(sym), "price_ts":engine.external_ts.get(sym),
+                        "price_mode":engine.mode_for(sym), "levels":levels,
+                        "gex_source":FUTURES.get(sym, {}).get("src", sym),
+                        "contract":bridge.status["contracts"].get(sym, {}).get("contract"),
+                        "projection":projection_status(sym),"model_inputs":assumptions(chain)})
+            await asyncio.to_thread(research_store.save_snapshots, rows)
+        except Exception:
+            log.exception("Research journal sample failed")
+        await asyncio.sleep(30)
 
 
 @app.get("/api/crypto")
@@ -752,33 +1092,53 @@ def api_depth(symbol: str):
 
 @app.websocket("/ws/{symbol}")
 async def ws_live(ws: WebSocket, symbol: str, filter: str = "all",
-                  win: float = Query(3.0)):
+                  win: float = Query(3.0, ge=0.5, le=15, allow_inf_nan=False)):
     sym = symbol.upper()
     if sym not in SYMBOLS:
         await ws.close(code=4004)
         return
-    await ws.accept()
+    origin = ws.headers.get("origin")
+    scheme = "https" if ws.url.scheme == "wss" else "http"
+    if not allowed_origin(origin, ws.headers.get("host", ""), scheme):
+        await ws.close(code=1008)
+        return
+    if not viewer_authorized(ws.headers.get("authorization",""),ws.cookies.get(COOKIE)):
+        await ws.close(code=4401)
+        return
+    ip=ws.client.host if ws.client else "unknown"
+    if not request_limits.open_ws(ip):
+        await ws.close(code=1013)
+        return
     filt = filter if filter in gex.FILTERS else "all"
     win = min(max(win, 0.5), 15.0) / 100.0
     last_alert_seq = STATE["alert_seq"]
+    last_valuation = None
     try:
-        snap = level_snapshot(sym, filt, with_zero=True, win=win)
+        await ws.accept()
+        snap = await asyncio.to_thread(level_snapshot, sym, filt, True, win)
         await ws.send_json({
             "type": "init",
+            "data_status": chain_status(sym, filt),
             "price": engine.price(sym),
             "mode": engine.mode_for(sym),
             "levels": {k: v for k, v in snap.items() if not isinstance(v, list)},
         })
         while True:
+            if not viewer_authorized(ws.headers.get("authorization",""),ws.cookies.get(COOKIE)):
+                await ws.close(code=4401)
+                return
             price = await engine.wait_tick(sym)
             STATE["tick_count"][sym] = STATE["tick_count"].get(sym, 0) + 1
             send_profile = (STATE["tick_count"][sym] % PROFILE_EVERY_N_TICKS == 0)
             chain = _chain_for(sym)
             fm = STATE["fmap"].get(sym)
             prev = fm["prev_close"] if fm else chain.prev_close if chain else None
-            snap = level_snapshot(sym, filt, with_zero=send_profile, win=win)
+            snap = await asyncio.to_thread(level_snapshot, sym, filt, send_profile, win)
+            send_profile = snap.get("valuation_time") != last_valuation
+            last_valuation = snap.get("valuation_time")
             msg = {
                 "type": "tick",
+                "data_status": chain_status(sym, filt),
                 "ts": time.time(),
                 "price": price,
                 "mode": engine.mode_for(sym),
@@ -803,6 +1163,9 @@ async def ws_live(ws: WebSocket, symbol: str, filter: str = "all",
         except Exception:  # noqa: BLE001
             pass
 
+    finally:
+        request_limits.close_ws(ip)
+
 
 @app.get("/api/rithmic")
 def api_rithmic_get():
@@ -815,14 +1178,18 @@ def api_rithmic_get():
             "message": st["message"],
             "since": st["since"],
             "contracts": st["contracts"],
+            "rollover":st.get("rollover"),
             "modes": {s: engine.mode_for(s) for s in TABS},
         },
     }
 
 
 @app.post("/api/rithmic/config")
-async def api_rithmic_config(body: dict):
-    bridge.update_config(body)
+async def api_rithmic_config(body: RithmicConfig):
+    try:
+        bridge.update_config(body.model_dump(exclude_none=True))
+    except (ValueError, TypeError) as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=422)
     if bridge.status["state"] == "connected":
         await bridge.disconnect("Configuration modifiée")
     if bridge.config.get("enabled") and bridge.config.get("auto_connect"):
@@ -843,12 +1210,10 @@ async def api_rithmic_connect():
 async def api_rithmic_discover(url: str = "", system: str = ""):
     """Découverte R|Protocol (templates 16 et 20) : systèmes servis par un
     gateway et liste des gateways régionaux — sans identifiants."""
-    uri = (url or bridge.config.get("url") or PAPER_URL).strip()
-    if not uri.startswith("wss://"):
-        uri = "wss://" + uri
-    host = uri.rsplit("//", 1)[-1]
-    if ":" not in host:
-        uri += ":443"
+    try:
+        uri = validate_gateway(url or bridge.config.get("url") or PAPER_URL)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=422)
     sysname = (system or bridge.config.get("system_name") or "").strip() or None
     try:
         return await asyncio.wait_for(
@@ -865,6 +1230,25 @@ async def api_rithmic_disconnect():
     await bridge.disconnect("Déconnecté manuellement")
     return {"ok": True, "status": bridge.status}
 
+
+app.include_router(build_research_router(option_tape, research_store, crypto_feed,
+                                         FUTURES, _chain_for, _to_src, engine, event_recorder, licensed_option_tape))
+app.include_router(build_ingest_router(licensed_option_tape,event_recorder))
+app.include_router(build_access_router())
+
+# React is primary once built. Keep a separately addressable legacy terminal.
+REACT_FRONTEND = os.path.join(os.path.dirname(FRONTEND), "terminal-react", "dist")
+app.mount("/classic", StaticFiles(directory=FRONTEND, html=True), name="classic_frontend")
+if os.path.isfile(os.path.join(REACT_FRONTEND, "index.html")):
+    @app.get("/", include_in_schema=False)
+    def primary_frontend():
+        return RedirectResponse("/react/")
+
+    app.mount("/react", StaticFiles(directory=REACT_FRONTEND, html=True), name="react_frontend")
+else:
+    @app.get("/react/", include_in_schema=False)
+    def react_build_required():
+        return PlainTextResponse("Frontend React non construit. Exécutez npm ci puis npm run build dans terminal-react, puis redémarrez le serveur. Le terminal classique reste disponible à /classic/.", status_code=503)
 
 app.mount("/", StaticFiles(directory=FRONTEND, html=True), name="frontend")
 
