@@ -1,8 +1,17 @@
 # GEX Terminal
 
+> **Mise à jour fiabilité / 0DTE** — prix différé figé par défaut, simulation sur
+> activation explicite seulement. Administration Rithmic protégée par jeton.
+> Lire [le guide de migration et de validation](docs/RELIABILITY.md) avant mise à jour.
+> Les sections de changelog ci-dessous décrivent parfois d'anciennes versions ;
+> le guide et la méthodologie actuelle priment.
+> Suite : [état d’exécution](docs/EXECUTION_STATUS.md) et [recette/exploitation](docs/OPERATIONS.md).
+
 Dashboard temps réel de **Gamma Exposure (GEX)**, **put/call walls** et **zero-GEX**
 pour SPX, SPY, QQQ, GLD, les futures ES, NQ, GC **et le BTC en 24/7** — construit
-uniquement avec des sources **gratuites**.
+avec des sources publiques **sans compte par défaut** et un accès market data
+temps réel facultatif. **Outil d’analyse uniquement : aucun passage d’ordres,
+aucun compte de trading à ajouter au terminal.**
 
 ## Sources de données
 
@@ -10,8 +19,16 @@ uniquement avec des sources **gratuites**.
 |---|---|---|---|
 | Chaînes d'options complètes (OI, IV, Greeks) | CBOE delayed quotes JSON (`cdn.cboe.com/api/global/delayed_quotes/options/…`) — SPX, SPY, QQQ, GLD, NDX | 0 € | ~15 min |
 | Bougies historiques (5m → 1D, 2 ans), actions & futures | Yahoo Finance chart API (`^SPX`, `ES=F`, `NQ=F`, `GC=F`…) | 0 € | ~15 min |
-| Ticks temps réel (actions/futures) | **SIM** par défaut (random walk calibré sur l'IV30) — **Rithmic** prêt à brancher | 0 € / compte Rithmic | live |
+| Prix actions/futures | Sources publiques différées par défaut ; **Rithmic market data** facultatif pour les ticks live | Public gratuit / abonnement données selon fournisseur | Différé selon source et rafraîchissement, ou live avec droits |
 | **BTC** : chaîne d'options (OI, IV, échéances quotidiennes), spot, bougies et tape | **Deribit** API publique v2 (`get_book_summary_by_currency`, `get_tradingview_chart_data`, WS `deribit_price_index.btc_usd` + `trades.*.100ms`) | 0 €, **sans compte ni clé** | temps réel |
+
+Sans identifiants, l’analyse reste utilisable avec les chaînes CBOE différées
+(~15 min à la source) et les bougies/cotations Yahoo, sous réserve de disponibilité.
+Le rafraîchissement/cache peut augmenter l’âge affiché : ce n’est pas une garantie
+de retard fixe de 15 min. Le BTC public Deribit reste temps réel sans compte.
+L’accès Rithmic optionnel connecte uniquement le **TICKER_PLANT**, jamais les plants
+ordres/P&L. Il n’accélère pas les chaînes CBOE ni la publication quotidienne de l’OI.
+Le carnet L2 et les flux privés exigent leurs propres droits de données.
 
 ## Futures : zones GEX projetées
 
@@ -41,15 +58,13 @@ Convention classique « hedge-dealer » (style SpotGamma / SqueezeMetrics) :
 - Dealers supposés **longs calls, courts puts**.
 - `GEX = signe × gamma × OI × spot² × 0.01 × 100` ($ par mouvement de 1 %).
 - Les Greeks sont **re-pricés en Black-Scholes** (IV de la chaîne, r = 4 %) à chaque
-  tick : les walls bougent donc avec le spot, comme sur un vrai desk.
-- **Call wall** = strike au **plus gros OI calls** au-dessus du spot (bande ±10 %,
-  convention SpotGamma) ; **Put wall** = plus gros OI puts en-dessous. Basés sur
-  l'OI (et non sur l'argmax du gamma) car le gamma ATM des 0DTE explose en fin
-  de journée et ferait flipper les walls à chaque tick.
+  évaluation (snapshot partagé jusqu’à 5 s) avec une horloge live ; cela reste un modèle.
+- **Call/put walls principales** = concentrations de gamma au-dessus/en-dessous du
+  spot dans la fenêtre choisie ; les **walls structurelles OI** sont séparées.
 - **Pics gamma** (call/put) affichés en référence intra-journalière dans la carte.
 - **Zero GEX** = niveau où le gamma net agrégé change de signe
-  (scan ±14 % autour du spot, 161 points).
-- **Vol Trigger / Expected move** = spot ± 1σ quotidien (IV30 / √252).
+  (scan ±14 % autour du spot, 161 points puis bissection). Gamma flip désigne ce même zéro.
+- **Expected move indicatif** = spot ± 1σ quotidien (IV30 / √252, √365 pour BTC). Ce n’est pas un vol trigger structurel.
 - Options sans IV (profondément ITM/OTM) : gamma du feed mis à l'échelle (S₀/S)².
 - Filtres d'échéance : ALL, 0DTE, ≤7D, ≤35D.
 
@@ -65,7 +80,7 @@ backend/
   gex.py            Moteur GEX vectorisé numpy (profil par strike, walls OI, zero-GEX)
   cboe.py           Fetch + cache disque des chaînes CBOE (TTL 15 min)
   history.py        Bougies Yahoo (cache 5 min) + quotes futures (basis/ratio)
-  live_feed.py      PriceEngine : SIM (défaut) ou ticks externes Rithmic, par symbole
+  live_feed.py      PriceEngine : DELAYED (défaut), SIM explicite ou ticks externes Rithmic, par symbole
   rithmic_bridge.py Connexion Rithmic (async_rithmic) : front-month auto, direct/anchor
 frontend/
   index.html / styles.css / app.js   (Lightweight Charts v5 + polices auto-hébergées)
@@ -94,7 +109,7 @@ Notes :
   pause 17-18 h), les ticks SIM sont **figés** : le prix ne dérive plus marché
   fermé — le compteur de ticks et l'horloge continuent de tourner ;
 - le dossier `data/` est créé automatiquement à la racine du projet :
-  cache des chaînes, préférences (dont identifiants Rithmic) et journal des
+  cache des chaînes, préférences (sans mot de passe Rithmic), journal SQLite et journal des
   snapshots GEX (`data/gex_hist/*.jsonl`, alimenté toutes les 15 min) ;
 - supprimer `data/` réinitialise cache et préférences ;
 - les données CBOE sont différées (~15 min) et Yahoo Finance gratuit ;
@@ -189,10 +204,9 @@ Détails techniques :
 
 - Librairie : [`async-rithmic`](https://async-rithmic.readthedocs.io) (pure Python,
   protobuf/websocket — `pip install -r requirements.txt`).
-- La config est stockée dans `data/rithmic_config.json` (**mot de passe en
-  clair** — privilégiez un compte paper ; ne versionnez pas ce fichier).
-- Si les ticks Rithmic deviennent silencieux (> 20 s), l'onglet repasse
-  automatiquement en SIM. En cas d'échec de connexion, le message d'erreur est
+- La config non secrète est stockée dans `data/rithmic_config.json` (permissions 0600). Le mot de passe reste en mémoire ; utiliser `RITHMIC_PASS` pour le démarrage automatique.
+- Si les ticks Rithmic deviennent silencieux (> 20 s), l'onglet passe en STALE,
+  conserve le dernier prix et suspend les alertes. En cas d'échec de connexion, le message d'erreur est
   affiché dans la modale (identifiants, gateway, conformance…).
 - Les gateways de **production** peuvent exiger le test de conformance Rithmic ;
   commencez avec « Rithmic Test » (`rituz00100.rithmic.com:443`) ou le gateway
@@ -557,8 +571,8 @@ horizontale fine pile sur son strike**, plus de zones larges.
   Bug corrigé au passage : l'IV du feed CBOE est en décimal (0.15 = 15 %) et
   était divisée par 100 -> gamma BS quasi nul sur la majorité des contrats.
 - **Niveaux** : CW1..CW5 = top 5 strikes au-dessus du spot classés par call
-  GEX ; PW1..PW5 = top 5 en dessous par |put GEX| ; gamma flip = strike où le
-  GEX net cumulé croise zéro (sinon zero-GEX re-pricé) ; max pain = strike
+  GEX ; PW1..PW5 = top 5 en dessous par |put GEX| ; gamma flip = zéro du
+  GEX agrégé selon le spot (ancienne définition cumulative supprimée) ; max pain = strike
   minimisant le payout total ; walls structurels OI +/-10 % conservés en
   contexte (drapeaux de la zone map).
 - **Fenêtre** : strikes candidats dans +/-win % du spot (défaut 3 %, réglable
@@ -613,3 +627,39 @@ heatmap GEX en mode session (`04_heatmap.png`), simulateur de scénario
 (`05_scenario.png`), pane GEX synchronisée (`06_gamma_pane.png`), timeframes &
 chips de niveaux (`07`, `08`), dessin sur chart (`09_dessin_midnight.png`),
 thèmes (`10_theme_daylight.png`, `11_theme_oled.png`).
+
+## Cockpit d’analyse
+
+Nouvelle vue Analyse : graphique + heatmap Gamma/Vanna par échéance, cellules
+liées au graphique, concentrations actuelles et vues enregistrables. Focus pour
+le graphique seul ; Recherche pour flow détaillé, historique et validation.
+Guide, API, unités et limites : [docs/WORKSPACE.md](docs/WORKSPACE.md).
+Aucune source payante ni donnée dark pool n'est activée par ce redesign.
+
+
+## Nouveau cockpit React (migration progressive)
+
+Interface React/TypeScript à **`/react/`**, après `cd terminal-react && npm ci &&
+npm run build`, puis redémarrage du backend. Après build, `/` ouvre React ; le classique reste à `/classic/`.
+Développement : backend en 8000 et `npm run dev -- --port 5173` dans
+`terminal-react/`. Node 22.12+ (22), 24 LTS ou 26+.
+
+Design graphite/menthe, Plex local, Motion, chart impératif, VP/VWAP
+paramétrables, journal et inspecteur. Échéances, scénarios, heatmaps, édition des dessins, recherche, relecture
+combinée et configuration des sources sont intégrés dans React. Guides Everything Claude
+Code locaux dans `.agents/skills/`. Démarrage, architecture, tests et limites :
+[Migration React](docs/REACT_MIGRATION.md).
+
+Démarrage **sans démonstration** : `./scripts/run-production.sh`. Sources réelles,
+conditions réseau, diagnostic et validation en séance :
+[Exploitation réelle](docs/REAL_DATA.md). Aucun flux de marché ne peut être reçu
+si l’hébergeur bloque les fournisseurs ; le terminal l’annonce sans fabriquer
+de cours. Recette UI isolée : `./scripts/test-react-ui.sh` (voir dépendances dans
+le guide React).
+
+### Mise à jour d'une ancienne installation
+
+Voir [le guide local Windows / macOS / Linux](docs/LOCAL_UPDATE.md) pour récupérer
+la branche publiée, conserver `.env` et `data/`, puis construire et lancer React.
+Windows PowerShell : `scripts/run-production.ps1` ; Linux/macOS/WSL :
+`scripts/run-production.sh`.

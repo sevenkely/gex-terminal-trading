@@ -1,0 +1,30 @@
+{
+  "source": "src/styles.css :root",
+  "palette": {
+    "background": "#0d1214",
+    "surface": "#141b1e",
+    "panel": "#182124",
+    "border": "#293337",
+    "text": "#e2e9e7",
+    "secondary": "#98aaa9",
+    "quiet": "#718583",
+    "positive": "#91d7bd",
+    "negative": "#e99da4",
+    "warning": "#debd7e"
+  },
+  "typography": {
+    "interface": "IBM Plex Sans",
+    "numbers": "IBM Plex Mono",
+    "body": 13,
+    "bodySecondary": 11,
+    "quote": 29
+  },
+  "spacing": [4, 8, 12, 16, 20, 24, 32],
+  "radius": { "control": 5, "panel": 6, "dialog": 10 },
+  "breakpoints": { "mobile": 620, "stacked": 980, "dense": 1280, "wide": 1700 },
+  "motion": {
+    "standardSeconds": 0.22,
+    "selectionSpring": { "stiffness": 420, "damping": 38 },
+    "reducedMotion": "system takes priority"
+  }
+}

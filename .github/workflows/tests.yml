@@ -1,0 +1,49 @@
+name: Offline reliability tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -r requirements.lock.txt
+      - run: pytest -q
+      - run: python -m crypto_feed.tests_offline
+      - run: node --check frontend/app.js && node --check frontend/research.js && node --check frontend/access.js && node --check frontend/validation.js && node --check frontend/workspace.js && node --check frontend/cockpit.js && node --check frontend/observed-replay.js && node --check frontend/chart-layout.js && node --check frontend/design.js && node --check frontend/indicator-math.js && node --check frontend/indicators.js
+      - run: node tests/indicator_math.cjs
+
+  react:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terminal-react
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: terminal-react/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build
+      - run: npm audit --audit-level=high
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+      - run: pip install -r ../requirements.lock.txt
+      - run: npm install --prefix ../.cache/ui --no-fund --no-audit playwright@1.64.1 @sparticuz/chromium@153.0.0
+      - run: ../scripts/test-react-ui.sh

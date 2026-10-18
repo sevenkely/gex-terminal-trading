@@ -1,5 +1,5 @@
 """
-RithmicBridge — connexion optionnelle à un compte Rithmic pour le prix
+RithmicBridge — accès optionnel aux données de marché Rithmic pour le prix
 temps réel (async_rithmic). Configurable depuis l'UI (modale Paramètres).
 
 - Les onglets futures (ES/NQ/GC) reçoivent le prix direct du contrat
@@ -7,7 +7,9 @@ temps réel (async_rithmic). Configurable depuis l'UI (modale Paramètres).
 - Les onglets cash (SPX/SPY/QQQ/GLD) peuvent être "ancrés" : les variations
   viennent du tick Rithmic, le niveau reste celui du cash (offset calculé au
   premier tick) — évite le saut du basis.
-- Sans compte / en cas d'erreur : fallback automatique sur les ticks SIM.
+- Sans accès données : sources publiques différées. En cas de coupure live :
+  prix figé et statut STALE ; aucune simulation automatique.
+- Analyse uniquement : TICKER_PLANT, sans connexion aux plants ordres/P&L.
 """
 from __future__ import annotations
 
@@ -16,6 +18,9 @@ import json
 import logging
 import os
 import time
+from security import validate_gateway
+from storage import write_json
+from flow_store import FlowStore
 
 import flow as flow_mod
 
@@ -78,6 +83,8 @@ class RithmicBridge:
     def __init__(self, engine) -> None:
         self.engine = engine
         self.config = self._load()
+        if os.path.exists(CONFIG_PATH):
+            self._save()  # migrate legacy files: remove persisted password
         self.client = None
         self._connect_task: asyncio.Task | None = None
         self.status: dict = {
@@ -90,7 +97,7 @@ class RithmicBridge:
         self._anchors: dict[str, float] = {}      # tab -> offset
         self.books: dict[tuple, dict] = {}        # (exchange, contract) -> order book
         self._book_batches: dict[tuple, dict] = {}
-        self.flow = flow_mod.OrderFlowEngine()    # gros trades / absorption / delta
+        self.flow = flow_mod.OrderFlowEngine(FlowStore(os.path.join(DATA_DIR, "flow.sqlite"), "rithmic"))    # gros trades / absorption / delta
         self._bbo: dict[tuple, tuple] = {}        # (exchange, contract) -> (bid, ask, ts)
 
     # ------------------------------------------------------------ order book
@@ -272,10 +279,7 @@ class RithmicBridge:
 
     def _save(self) -> None:
         os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = CONFIG_PATH + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(self.config, f, indent=1)
-        os.replace(tmp, CONFIG_PATH)
+        write_json(CONFIG_PATH, {k:v for k,v in self.config.items() if k != "password"})
 
     def public(self) -> dict:
         cfg = json.loads(json.dumps(self.config))
@@ -283,6 +287,10 @@ class RithmicBridge:
         return cfg
 
     def update_config(self, body: dict) -> None:
+        if "url" in body:
+            validate_gateway(body["url"])
+        if "password" in body and not isinstance(body["password"], str):
+            raise ValueError("Mot de passe invalide")
         for k in ("user", "system_name", "url", "app_name", "app_version"):
             if k in body and isinstance(body[k], str):
                 self.config[k] = body[k].strip()
@@ -303,7 +311,12 @@ class RithmicBridge:
 
     # --------------------------------------------------------------- connect
     async def connect(self) -> None:
-        if self.status["state"] == "connecting":
+        try:
+            validate_gateway(self.config.get("url", ""))
+        except ValueError as exc:
+            self._set_state("error", str(exc))
+            return
+        if self.status["state"] in ("connecting","connected"):
             return
         if not (self.config.get("user") and self.config.get("password")):
             self._set_state("error", "Identifiants Rithmic manquants")
@@ -311,9 +324,30 @@ class RithmicBridge:
         self._set_state("connecting", "Connexion à Rithmic…")
         self._connect_task = asyncio.create_task(self._connect_flow())
 
+    async def check_rollover(self):
+        """Detect provider front-month changes without silently replacing feeds."""
+        if not self.client or self.status['state']!='connected':
+            return
+        checked={};pending=[];errors=0
+        for tab,mapping in self.config['mappings'].items():
+            current=self.status['contracts'].get(tab,{}).get('contract')
+            if mapping.get('contract') or not current:
+                continue
+            key=(mapping.get('root'),mapping.get('exchange'))
+            if key not in checked:
+                try:
+                    checked[key]=await asyncio.wait_for(self.client.get_front_month_contract(*key),timeout=10)
+                except Exception:
+                    checked[key]=None;errors+=1
+            recommended=checked[key]
+            if recommended and recommended!=current:
+                pending.append(dict(symbol=tab,current=current,recommended=recommended))
+        self.status['rollover']=dict(checked_at=time.time(),pending=pending,errors=errors,
+            policy='manual_reconnect',limitation='Provider front-month convention; explicit contracts never auto-rolled.')
+
     async def _connect_flow(self) -> None:
         try:
-            from async_rithmic import (RithmicClient, DataType,
+            from async_rithmic import (RithmicClient, DataType, SysInfraType,
                                        LastTradePresenceBits,
                                        BestBidOfferPresenceBits)
         except ImportError:
@@ -328,7 +362,8 @@ class RithmicBridge:
                 app_version=self.config.get("app_version") or "1.0",
                 url=self.config["url"],
             )
-            await asyncio.wait_for(client.connect(), timeout=60)
+            # Explicitly avoid the SDK default, which also connects ORDER/PNL plants.
+            await asyncio.wait_for(client.connect(plants=[SysInfraType.TICKER_PLANT]), timeout=60)
             self.client = client
 
             # résolve les contrats et abonne
@@ -364,7 +399,7 @@ class RithmicBridge:
                     + ", ".join(unresolved)
                     + ") : ce gateway ne sert pas les données de référence CME. "
                     "Renseignez un contrat explicite (ex. ESM6) ou utilisez un "
-                    "compte market data. Les onglets restent en SIM.")
+                    "compte market data. Les prix restent différés/figés.")
                 return
 
             async def on_tick(data: dict) -> None:
